@@ -3,15 +3,14 @@
 from pages.main_menu.purchase_request_page import (
     PurchaseRequestPage as DefaultPurchaseRequestPage,
 )
-from utils.res_constants import RES_PURCHASE_REQUESTS_URL
+from utils.tenants import RESTAURANT, Tenant
 
 
 class PurchaseRequestPage(DefaultPurchaseRequestPage):
     """Use the shared Purchase Request workflow against the Restaurant tenant."""
 
-    def __init__(self, page) -> None:
-        super().__init__(page)
-        self.url = RES_PURCHASE_REQUESTS_URL
+    def __init__(self, page, tenant: Tenant = RESTAURANT) -> None:
+        super().__init__(page, tenant)
 
     def _select_named_option(self, field_name: str, option_name: str) -> None:
         control = self.page.locator(f"input[name='{field_name}']").locator(

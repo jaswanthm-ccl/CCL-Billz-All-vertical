@@ -1,17 +1,85 @@
 import os
 import shutil
+from pathlib import Path
 from urllib.parse import urlparse
 import pytest
-from pages.auth.login_page import LoginPage
-from utils.constants import ADMIN_EMAIL, ADMIN_PASSWORD, BASE_URL
+from utils.auth import login_storage_state
+from utils.tenants import TENANTS, active_tenant, set_active_tenant
+
+TESTS_DIR = Path(__file__).parent / "tests"
+VERTICALS_DIR = TESTS_DIR / "Verticals"
+
+# Shared (retail) test modules for screens a vertical does not have in its menu.
+NOT_IN_VERTICAL = {
+    "galaxy": {
+        TESTS_DIR / "main_menu" / "test_enquiry.py",
+        TESTS_DIR / "main_menu" / "test_payments.py",
+        TESTS_DIR / "main_menu" / "test_ledgers.py",
+        TESTS_DIR / "master_menu" / "test_enquiry_types.py",
+        TESTS_DIR / "master_menu" / "test_enquiry_stage_workflows.py",
+    },
+}
+
+
+# Modules that assert exact changes in tenant-wide totals, or change tenant-wide settings.
+# Other tests running at the same time shift those numbers, so these run one at a time (marker: serial).
+SERIAL_MODULES = {
+    TESTS_DIR / path
+    for path in (
+        "accounting/test_profit_loss.py",
+        "accounting/test_balance_sheet.py",
+        "accounting/test_cash_flow.py",
+        "accounting/test_day_book.py",
+        "master_menu/test_cities.py",
+        "master_menu/test_branches.py",
+        "regression/test_daybook_and_ledger_impact.py",
+        "regression/test_emi_sale_and_reconciliation.py",
+        "regression/test_master_commerce_lifecycle_flow.py",
+        "regression/test_financial_reports_and_gstr_flow.py",
+        "Verticals/Restaurant/accounting/test_profit_loss.py",
+        "Verticals/Restaurant/accounting/test_balance_sheet.py",
+        "Verticals/Restaurant/accounting/test_trial_balance.py",
+        "Verticals/Restaurant/accounting/test_day_book.py",
+        "Verticals/Restaurant/accounting/test_daily_closing_report.py",
+        "Verticals/Restaurant/accounting/test_financial_report.py",
+        "Verticals/Restaurant/accounting/test_category_wise_sales_report.py",
+        "Verticals/Restaurant/regression/test_restaurant_accounting_impact_flow.py",
+        "Verticals/Restaurant/regression/test_restaurant_reports_and_reconciliation_flow.py",
+        "Verticals/Restaurant/regression/test_procurement_inventory_and_indent_lifecycle_flow.py",
+    )
+}
+
+
+def _vertical_of(path: Path) -> str | None:
+    """'galaxy' / 'restaurant' for tests under tests/Verticals/<Name>, None for shared tests."""
+    try:
+        return path.resolve().relative_to(VERTICALS_DIR.resolve()).parts[0].lower()
+    except (ValueError, IndexError):
+        return None
+
+
+def _resolve_tenant_name(config) -> str:
+    """--tenant, then BILLZ_TENANT, then the vertical folder named on the command line, else retail."""
+    name = config.getoption("--tenant") or os.getenv("BILLZ_TENANT")
+    if name:
+        return name.lower()
+    named = {_vertical_of(Path(arg.split("::")[0])) for arg in config.args}
+    if len(named) == 1 and None not in named and named <= set(TENANTS):
+        return named.pop()
+    return "retail"
 
 
 def pytest_configure(config):
+    try:
+        tenant = set_active_tenant(_resolve_tenant_name(config))
+    except ValueError as exc:
+        raise pytest.UsageError(str(exc)) from None
+
     # Safety Check: Mutation Guard & Environment Lockout
     allow_mutating = os.getenv("ALLOW_MUTATING_TESTS", "0")
     test_env = os.getenv("TEST_ENV", "dev").lower()
 
-    hostname = urlparse(BASE_URL).netloc.lower()
+    hostname = urlparse(tenant.base_url).netloc.lower()
     forbidden_terms = ["uat", "prod", "production", "live"]
     if any(term in hostname.split(".") for term in forbidden_terms) or any(term in hostname.split("-") for term in forbidden_terms):
         raise pytest.UsageError(
@@ -37,6 +105,48 @@ def pytest_addoption(parser):
         default=False,
         help="Enable the interactive draggable playback control panel"
     )
+    parser.addoption(
+        "--tenant",
+        choices=sorted(TENANTS),
+        default=None,
+        help="Vertical to test: runs every test that applies to it (default: retail, or BILLZ_TENANT)",
+    )
+
+
+def pytest_report_header(config):
+    tenant = active_tenant()
+    return f"billz tenant: {tenant.name} ({tenant.base_url})"
+
+
+def pytest_collection_modifyitems(config, items):
+    """Keep exactly the tests that belong to the active vertical."""
+    tenant = active_tenant().name
+    excluded = NOT_IN_VERTICAL.get(tenant, set())
+
+    def belongs(item) -> bool:
+        path = Path(item.path)
+        vertical = _vertical_of(path)
+        if tenant == "retail":
+            return vertical is None
+        if tenant == "galaxy":
+            return vertical == "galaxy" or (vertical is None and path.resolve() not in {p.resolve() for p in excluded})
+        return vertical == tenant
+
+    serial_modules = {p.resolve() for p in SERIAL_MODULES}
+    for item in items:
+        if Path(item.path).resolve() in serial_modules:
+            item.add_marker(pytest.mark.serial)
+
+    selected = [item for item in items if belongs(item)]
+    deselected = [item for item in items if not belongs(item)]
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+        items[:] = selected
+
+
+@pytest.fixture(scope="session")
+def tenant():
+    return active_tenant()
 
 
 @pytest.fixture(autouse=True, scope="session")
@@ -60,23 +170,8 @@ def browser_context_args(browser_context_args):
     }
 
 @pytest.fixture(scope="session")
-def auth_state(browser):
-    context = browser.new_context(
-        ignore_https_errors=True,
-        viewport={"width": 1280, "height": 720}
-    )
-    page = context.new_page()
-    login_page = LoginPage(page)
-    login_page.navigate()
-    login_page.login(ADMIN_EMAIL, ADMIN_PASSWORD)
-    page.wait_for_url(lambda url: "/login" not in url, timeout=10000)
-    page.wait_for_load_state("networkidle")
-
-
-    storage_state = context.storage_state()
-    context.close()
-
-    yield storage_state
+def auth_state(browser, tenant):
+    yield login_storage_state(browser, tenant)
 
 @pytest.fixture
 def logged_in_page(browser, auth_state, request):

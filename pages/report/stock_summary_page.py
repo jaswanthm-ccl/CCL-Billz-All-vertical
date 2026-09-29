@@ -8,10 +8,11 @@ import re
 
 from playwright.sync_api import Download, Page, Response
 
-from utils.constants import STOCK_SUMMARY_URL
+from pages.common.base_page import BasePage
+from utils.tenants import Tenant
 
 
-class StockSummaryPage:
+class StockSummaryPage(BasePage):
     """Stock Summary report interactions and API-backed assertions."""
 
     EXPECTED_HEADERS = [
@@ -37,9 +38,10 @@ class StockSummaryPage:
         "Selling Value",
     ]
 
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.url = STOCK_SUMMARY_URL
+    PATH = "/reports/stock-summary"
+
+    def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
+        super().__init__(page, tenant)
         self.last_data: dict[str, Any] = {}
 
     @staticmethod

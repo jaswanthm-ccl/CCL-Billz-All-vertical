@@ -11,15 +11,14 @@ from typing import Callable
 from playwright.sync_api import Page, Locator
 
 from pages.accounting.trial_balance_page import TrialBalancePage as SharedTrialBalancePage
-from utils.res_constants import RESTAURANT_BASE_URL
+from utils.tenants import RESTAURANT, Tenant
 
 
 class TrialBalancePage(SharedTrialBalancePage):
     """Restaurant adapter for the Trial Balance report page."""
 
-    def __init__(self, page: Page) -> None:
-        super().__init__(page)
-        self.url = f"{RESTAURANT_BASE_URL}/reports/trial-balance"
+    def __init__(self, page: Page, tenant: Tenant = RESTAURANT) -> None:
+        super().__init__(page, tenant)
 
     @property
     def branch_input(self) -> Locator:

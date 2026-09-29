@@ -11,13 +11,17 @@ from pages.auth.login_page import LoginPage
 from pages.master_menu.branches_page import BranchesPage
 from pages.master_menu.roles_page import RolesPage
 from pages.master_menu.users_page import UsersPage
-from utils.constants import BRANCHES_URL, CITY_URL, ROLES_URL, USERS_URL
+from utils.tenants import active_tenant
 from utils.random_data import (
     generate_random_email,
     generate_random_name,
     generate_random_password,
 )
 
+BRANCHES_URL = active_tenant().url("/branches")
+CITY_URL = active_tenant().url("/cities")
+ROLES_URL = active_tenant().url("/roles")
+USERS_URL = active_tenant().url("/users")
 
 VIEW_PERMISSIONS = [
     "view_branches",

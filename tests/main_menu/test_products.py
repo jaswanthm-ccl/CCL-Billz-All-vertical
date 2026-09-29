@@ -187,9 +187,6 @@ def test_reject_duplicate_product_name(products_page, product_dependencies, prod
 # Dependency-deletion protection tests (Isolated entity creation)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.xfail(
-    reason="Bug #TBD: brand assigned to an active product can be deleted"
-)
 def test_delete_brand_assigned_to_product_is_blocked(
     logged_in_page, product_dependencies, products_page, product_cleanup
 ):

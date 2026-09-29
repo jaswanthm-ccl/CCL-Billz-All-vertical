@@ -11,7 +11,7 @@ from utils.constants import (
     SETTLED_TIMEOUT,
     UI_TIMEOUT,
 )
-from utils.tenants import RETAIL, Tenant
+from utils.tenants import Tenant
 
 
 DELETE_ICON_BUTTON = 'button[title="delete"]:has(i.bi-trash)'
@@ -21,7 +21,7 @@ RETRIEVE_ICON_BUTTON = 'button[title="delete"]:has(i.bi-arrow-clockwise)'
 class AttributeKeysPage(BasePage):
     PATH = "/attribute-keys"
 
-    def __init__(self, page: Page, tenant: Tenant = RETAIL) -> None:
+    def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
         super().__init__(page, tenant)
 
     # Legacy alias: unmigrated callers still assign attribute_keys_url directly.

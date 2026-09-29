@@ -4,12 +4,11 @@ from typing import Any
 
 from playwright.sync_api import Locator, Page
 
-from utils.constants import BASE_URL
+from pages.common.base_page import BasePage
+from utils.tenants import Tenant
 
-ENQUIRY_URL = f"{BASE_URL}/enquiries"
 
-
-class EnquiryPage:
+class EnquiryPage(BasePage):
     """Page object for the Enquiry module (/enquiries).
 
     Enquiries are CRM-like leads. Create requires: Enquiry Type, Branch,
@@ -21,9 +20,10 @@ class EnquiryPage:
     Search: placeholder='Search...' (live, debounced)
     """
 
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.url = ENQUIRY_URL
+    PATH = "/enquiries"
+
+    def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
+        super().__init__(page, tenant)
 
     def navigate(self) -> None:
         self.page.goto(self.url)

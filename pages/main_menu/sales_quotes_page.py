@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import re
 from playwright.sync_api import Page
-from utils.constants import SALES_QUOTES_URL
+from pages.common.base_page import BasePage
+from utils.tenants import Tenant
 
-class SalesQuotesPage:
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.url = SALES_QUOTES_URL
+class SalesQuotesPage(BasePage):
+    PATH = "/sales-quotes"
+
+    def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
+        super().__init__(page, tenant)
 
     def navigate(self) -> None:
         self.page.goto(self.url)

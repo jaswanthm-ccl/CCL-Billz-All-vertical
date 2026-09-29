@@ -4,14 +4,16 @@ import re
 from decimal import Decimal
 from playwright.sync_api import Page
 
-from utils.constants import STOCK_TRANSFERS_URL
+from pages.common.base_page import BasePage
 from utils.models import StockTransferResult
+from utils.tenants import Tenant
 
 
-class StockTransfersPage:
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.url = STOCK_TRANSFERS_URL
+class StockTransfersPage(BasePage):
+    PATH = "/stock-transfers"
+
+    def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
+        super().__init__(page, tenant)
 
     def navigate(self) -> None:
         self.page.goto(self.url)

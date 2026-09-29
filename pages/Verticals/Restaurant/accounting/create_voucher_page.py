@@ -8,23 +8,13 @@ from urllib.parse import urlparse
 from playwright.sync_api import Page, expect
 
 from pages.accounting.create_voucher_page import CreateVoucherPage as DefaultCreateVoucherPage
-from utils.res_constants import (
-    RESTAURANT_BASE_URL,
-    RES_MDR_SETTLEMENT_URL,
-    RES_PAYMENT_VOUCHER_URL,
-)
 from utils.models import VoucherResult
+from utils.tenants import RESTAURANT, Tenant
 
 
 class CreateVoucherPage(DefaultCreateVoucherPage):
-    def __init__(self, page: Page) -> None:
-        super().__init__(page)
-        self.create_voucher_url = f"{RESTAURANT_BASE_URL}/vouchers/create"
-        self.payment_voucher_url = RES_PAYMENT_VOUCHER_URL
-        self.receipt_voucher_url = f"{RESTAURANT_BASE_URL}/vouchers/receipt/create"
-        self.contra_voucher_url = f"{RESTAURANT_BASE_URL}/vouchers/contra/create"
-        self.journal_voucher_url = f"{RESTAURANT_BASE_URL}/vouchers/journal/create"
-        self.mdr_settlement_url = RES_MDR_SETTLEMENT_URL
+    def __init__(self, page: Page, tenant: Tenant = RESTAURANT) -> None:
+        super().__init__(page, tenant)
 
     def navigate(self) -> None:
         self.page.goto(self.create_voucher_url)

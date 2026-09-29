@@ -3,6 +3,15 @@ from typing import Callable
 
 import pytest
 
+from tests.Verticals.Galaxy.data_fixtures import (  # noqa: F401  (re-exported as fixtures)
+    galaxy_category,
+    galaxy_city,
+    galaxy_customer,
+    galaxy_emi_provider,
+    galaxy_serial_product,
+    galaxy_stock,
+    galaxy_supplier,
+)
 from utils.auth import login_storage_state
 from utils.tenants import GALAXY
 

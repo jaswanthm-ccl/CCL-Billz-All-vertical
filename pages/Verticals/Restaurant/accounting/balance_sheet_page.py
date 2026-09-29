@@ -11,15 +11,14 @@ from typing import Callable
 from playwright.sync_api import Page, Locator
 
 from pages.accounting.balance_sheet_page import BalanceSheetPage as SharedBalanceSheetPage
-from utils.res_constants import RESTAURANT_BASE_URL
+from utils.tenants import RESTAURANT, Tenant
 
 
 class BalanceSheetPage(SharedBalanceSheetPage):
     """Restaurant adapter for the Balance Sheet report page."""
 
-    def __init__(self, page: Page) -> None:
-        super().__init__(page)
-        self.url = f"{RESTAURANT_BASE_URL}/reports/balance-sheet"
+    def __init__(self, page: Page, tenant: Tenant = RESTAURANT) -> None:
+        super().__init__(page, tenant)
 
     def _capture(self, action: Callable[[], object], timeout: int = 30_000) -> dict:
         with self.page.expect_response(self._is_report_response, timeout=timeout) as info:

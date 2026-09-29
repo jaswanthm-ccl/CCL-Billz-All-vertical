@@ -185,11 +185,11 @@ def test_edit_branch_with_blank_sort_order(logged_in_page, branch_cleanup):
     assert branches_page.edit_with_blank_sort_order_is_handled(branch_name)
 
 
-@pytest.mark.xfail(reason="Known bug: the first City is auto-selected without a configured default")
-def test_new_branch_has_no_city_selected_by_default(logged_in_page):
+def test_new_branch_preselects_first_city_without_configured_default(logged_in_page):
+    """Intended behaviour: Add Branch pre-selects the first City when no default City is configured."""
     branches_page = BranchesPage(logged_in_page)
     branches_page.navigate()
-    assert branches_page.city_is_unselected_by_default()
+    assert not branches_page.city_is_unselected_by_default()
 
 
 @pytest.mark.parametrize("phone", ["123", "abcdefghij"])

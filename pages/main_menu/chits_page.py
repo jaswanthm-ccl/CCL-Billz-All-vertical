@@ -5,12 +5,11 @@ from decimal import Decimal
 
 from playwright.sync_api import Page
 
-from utils.constants import BASE_URL
+from pages.common.base_page import BasePage
+from utils.tenants import Tenant
 
-CHITS_URL = f"{BASE_URL}/chits"
 
-
-class ChitsPage:
+class ChitsPage(BasePage):
     """Page object for the Chits module (/chits).
 
     Chits are fund-based financial instruments. Full CRUD plus
@@ -22,9 +21,10 @@ class ChitsPage:
     Search: placeholder='Search...' (live, debounced)
     """
 
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.url = CHITS_URL
+    PATH = "/chits"
+
+    def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
+        super().__init__(page, tenant)
 
     def navigate(self) -> None:
         self.page.goto(self.url)

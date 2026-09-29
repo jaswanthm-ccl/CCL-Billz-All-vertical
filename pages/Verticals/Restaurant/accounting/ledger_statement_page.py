@@ -9,15 +9,14 @@ from decimal import Decimal
 from playwright.sync_api import Page, Locator
 
 from pages.accounting.ledger_statement_page import LedgerStatementPage as SharedLedgerStatementPage
-from utils.res_constants import RESTAURANT_BASE_URL
+from utils.tenants import RESTAURANT, Tenant
 
 
 class LedgerStatementPage(SharedLedgerStatementPage):
     """Restaurant adapter for the Ledger Statement report page."""
 
-    def __init__(self, page: Page) -> None:
-        super().__init__(page)
-        self.url = f"{RESTAURANT_BASE_URL}/reports/ledger-statement"
+    def __init__(self, page: Page, tenant: Tenant = RESTAURANT) -> None:
+        super().__init__(page, tenant)
 
     @property
     def ledger_select(self) -> Locator:

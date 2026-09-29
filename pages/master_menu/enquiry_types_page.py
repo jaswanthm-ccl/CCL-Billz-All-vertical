@@ -4,9 +4,10 @@ import re
 
 from playwright.sync_api import Page, Response
 
+from pages.common.base_page import BasePage
 from pages.common.form_page import has_validation_feedback
+from utils.tenants import Tenant
 from utils.constants import (
-    ENQUIRY_TYPES_URL,
     LIST_TIMEOUT,
     SETTLED_TIMEOUT,
     UI_TIMEOUT,
@@ -17,10 +18,20 @@ DELETE_ICON_BUTTON = 'button[title="delete"]:has(i.bi-trash)'
 RETRIEVE_ICON_BUTTON = 'button[title="delete"]:has(i.bi-arrow-clockwise)'
 
 
-class EnquiryTypesPage:
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.enquiry_types_url = ENQUIRY_TYPES_URL
+class EnquiryTypesPage(BasePage):
+    PATH = "/enquiry-types"
+
+    def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
+        super().__init__(page, tenant)
+
+    # Legacy alias: unmigrated callers still assign enquiry_types_url directly.
+    @property
+    def enquiry_types_url(self) -> str:
+        return self.url
+
+    @enquiry_types_url.setter
+    def enquiry_types_url(self, value: str) -> None:
+        self.url = value
 
     @property
     def add_button(self):
@@ -86,7 +97,7 @@ class EnquiryTypesPage:
         )
 
     def navigate(self) -> None:
-        self.page.goto(self.enquiry_types_url)
+        self.page.goto(self.url)
         self.add_button.wait_for(state="visible", timeout=UI_TIMEOUT)
 
     def is_enquiry_types_visible(self) -> bool:

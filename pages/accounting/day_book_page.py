@@ -5,17 +5,19 @@ from decimal import Decimal
 
 from playwright.sync_api import Page, expect
 
-from utils.constants import ACCOUNTING_DAY_BOOK_URL
+from pages.common.base_page import BasePage
+from utils.tenants import Tenant
 
 
-class DayBookPage:
+class DayBookPage(BasePage):
     """Accounting Day Book voucher audit report."""
 
     EMPTY_MESSAGES = ("Run report to load vouchers.", "No data found")
 
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.url = ACCOUNTING_DAY_BOOK_URL
+    PATH = "/accounting/day-book"
+
+    def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
+        super().__init__(page, tenant)
         self.last_report: dict = {}
         self.last_response_status: int | None = None
 

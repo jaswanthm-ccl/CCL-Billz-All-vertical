@@ -5,20 +5,23 @@ from typing import TypeVar
 from playwright.sync_api import Page
 
 from pages.common.components import ReactSelect
-from utils.tenants import RETAIL, Tenant
+from utils.tenants import Tenant, active_tenant
 
 P = TypeVar("P", bound="BasePage")
 
 
 class BasePage:
-    """Tenant-aware base: subclasses set PATH and never import a *_URL constant."""
+    """Tenant-aware base: subclasses set PATH and never import a *_URL constant.
+
+    tenant=None means the run's active tenant (pytest --tenant / BILLZ_TENANT).
+    """
 
     PATH: str = ""
 
-    def __init__(self, page: Page, tenant: Tenant = RETAIL) -> None:
+    def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
         self.page = page
-        self.tenant = tenant
-        self.url = tenant.url(self.PATH)
+        self.tenant = tenant or active_tenant()
+        self.url = self.tenant.url(self.PATH)
 
     def navigate(self) -> None:
         self.page.goto(self.url)

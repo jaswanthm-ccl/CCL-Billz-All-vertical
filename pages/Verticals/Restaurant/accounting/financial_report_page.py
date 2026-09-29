@@ -7,13 +7,15 @@ from __future__ import annotations
 import re
 from decimal import Decimal
 from playwright.sync_api import Page, Locator
-from utils.res_constants import RESTAURANT_BASE_URL
+from pages.common.base_page import BasePage
+from utils.tenants import RESTAURANT, Tenant
 
 
-class FinancialReportPage:
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.url = f"{RESTAURANT_BASE_URL}/reports/financial-report"
+class FinancialReportPage(BasePage):
+    PATH = "/reports/financial-report"
+
+    def __init__(self, page: Page, tenant: Tenant = RESTAURANT) -> None:
+        super().__init__(page, tenant)
 
     def navigate(self) -> None:
         self.page.goto(self.url, wait_until="domcontentloaded")

@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any
 
 from pages.report.gstr_1_base_page import Gstr1ReportPage
-from utils.constants import GSTR1_B2C_URL
 
 
 class Gstr1B2cPage(Gstr1ReportPage):
@@ -11,7 +10,7 @@ class Gstr1B2cPage(Gstr1ReportPage):
 
     REPORT_NAME = "GSTR-1 B2C"
     API_PATH_SUFFIX = "/reports/gstr1/b2c"
-    REPORT_URL = GSTR1_B2C_URL
+    PATH = "/reports/gstr1-b2c"
     EXPECTED_HEADERS = [
         "INVOICE NUMBER",
         "INVOICE DATE",

@@ -7,17 +7,16 @@ import re
 from playwright.sync_api import Locator, Page
 
 from pages.accounting.voucher_history_page import VoucherHistoryPage
-from utils.res_constants import RESTAURANT_BASE_URL
+from utils.tenants import RESTAURANT, Tenant
 
 
 class VouchersPage(VoucherHistoryPage):
     """Use the shared Voucher History contract against the Restaurant tenant."""
 
-    def __init__(self, page: Page) -> None:
-        super().__init__(page)
-        self.create_url = f"{RESTAURANT_BASE_URL}/vouchers/create"
-        self.history_url = f"{RESTAURANT_BASE_URL}/vouchers/history"
-        self.url = self.history_url
+    def __init__(self, page: Page, tenant: Tenant = RESTAURANT) -> None:
+        super().__init__(page, tenant)
+        self.create_url = tenant.url("/vouchers/create")
+        self.history_url = self.url
 
     def navigate_create(self) -> None:
         self.page.goto(self.create_url)

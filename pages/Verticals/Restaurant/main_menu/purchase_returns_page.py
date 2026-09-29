@@ -8,13 +8,15 @@ import re
 from urllib.parse import urlparse
 
 from playwright.sync_api import Page, Locator
-from utils.res_constants import RESTAURANT_BASE_URL
+from pages.common.base_page import BasePage
+from utils.tenants import RESTAURANT, Tenant
 
 
-class PurchaseReturnsPage:
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.url = f"{RESTAURANT_BASE_URL}/purchase-returns"
+class PurchaseReturnsPage(BasePage):
+    PATH = "/purchase-returns"
+
+    def __init__(self, page: Page, tenant: Tenant = RESTAURANT) -> None:
+        super().__init__(page, tenant)
 
     def navigate(self) -> None:
         self.page.goto(self.url)

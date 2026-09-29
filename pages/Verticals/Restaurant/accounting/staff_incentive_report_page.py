@@ -6,14 +6,15 @@ from __future__ import annotations
 
 import re
 from playwright.sync_api import Page, Locator
-from utils.res_constants import RESTAURANT_BASE_URL
+from pages.common.base_page import BasePage
+from utils.tenants import RESTAURANT, Tenant
 
 
-class StaffIncentiveReportPage:
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.waiter_url = f"{RESTAURANT_BASE_URL}/reports/waiter-wise-incentive"
-        self.daily_url = f"{RESTAURANT_BASE_URL}/reports/daily-incentive"
+class StaffIncentiveReportPage(BasePage):
+    def __init__(self, page: Page, tenant: Tenant = RESTAURANT) -> None:
+        super().__init__(page, tenant)
+        self.waiter_url = tenant.url("/reports/waiter-wise-incentive")
+        self.daily_url = tenant.url("/reports/daily-incentive")
 
     def navigate(self) -> None:
         self.page.goto(self.waiter_url)

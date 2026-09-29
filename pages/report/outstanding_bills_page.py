@@ -7,15 +7,17 @@ from urllib.parse import parse_qs, urlparse
 
 from playwright.sync_api import Page, Response
 
-from utils.constants import OUTSTANDING_BILLS_URL
+from pages.common.base_page import BasePage
+from utils.tenants import Tenant
 
 
-class OutstandingBillsPage:
+class OutstandingBillsPage(BasePage):
     """Read-only page object for the standalone Outstanding Bills report."""
 
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.url = OUTSTANDING_BILLS_URL
+    PATH = "/vouchers/outstanding"
+
+    def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
+        super().__init__(page, tenant)
         self.last_data: dict[str, Any] = {}
 
     @staticmethod

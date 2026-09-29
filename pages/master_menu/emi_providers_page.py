@@ -8,7 +8,7 @@ from utils.constants import (
     SETTLED_TIMEOUT,
     UI_TIMEOUT,
 )
-from utils.tenants import RETAIL, Tenant
+from utils.tenants import Tenant
 from pages.common.base_page import BasePage
 
 DELETE_ICON_BUTTON = 'button[title="delete"]:has(i.bi-trash)'
@@ -18,7 +18,7 @@ RESTORE_ICON_BUTTON = 'button[title="delete"]:has(i.bi-arrow-clockwise)'
 class EmiProvidersPage(BasePage):
     PATH = "/emi-providers"
 
-    def __init__(self, page: Page, tenant: Tenant = RETAIL) -> None:
+    def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
         super().__init__(page, tenant)
 
     @property

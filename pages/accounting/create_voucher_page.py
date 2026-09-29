@@ -4,20 +4,14 @@ import re
 from urllib.parse import urlparse
 
 from decimal import Decimal
-from playwright.sync_api import Page
+from playwright.sync_api import Page, Response, TimeoutError as PlaywrightTimeoutError, expect
 
-from utils.constants import BASE_URL
+from pages.common.base_page import BasePage
 from utils.models import VoucherResult
+from utils.tenants import Tenant
 
 
-CREATE_VOUCHER_URL = f"{BASE_URL}/vouchers/create"
-RECEIPT_VOUCHER_URL = f"{BASE_URL}/vouchers/receipt/create"
-PAYMENT_VOUCHER_URL = f"{BASE_URL}/vouchers/payment/create"
-CONTRA_VOUCHER_URL = f"{BASE_URL}/vouchers/contra/create"
-JOURNAL_VOUCHER_URL = f"{BASE_URL}/vouchers/journal/create"
-
-
-class CreateVoucherPage:
+class CreateVoucherPage(BasePage):
     """Page object for voucher creation forms."""
 
     TYPE_LABELS = {
@@ -29,29 +23,32 @@ class CreateVoucherPage:
         "MDR Settlement": "MDR Settlement",
     }
 
-    def __init__(self, page: Page) -> None:
-        self.page = page
+    PATH = "/vouchers/create"
+
+    def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
+        super().__init__(page, tenant)
         self._selected_type = ""
         self._submission_succeeded = False
-        self.create_voucher_url = CREATE_VOUCHER_URL
-        self.payment_voucher_url = PAYMENT_VOUCHER_URL
-        self.receipt_voucher_url = RECEIPT_VOUCHER_URL
-        self.contra_voucher_url = CONTRA_VOUCHER_URL
-        self.journal_voucher_url = JOURNAL_VOUCHER_URL
+        self.last_voucher_response: Response | None = None
+        self.create_voucher_url = self.tenant.url("/vouchers/create")
+        self.payment_voucher_url = self.tenant.url("/vouchers/payment/create")
+        self.receipt_voucher_url = self.tenant.url("/vouchers/receipt/create")
+        self.contra_voucher_url = self.tenant.url("/vouchers/contra/create")
+        self.journal_voucher_url = self.tenant.url("/vouchers/journal/create")
+        self.mdr_settlement_url = self.tenant.url("/vouchers/mdr/create")
 
     def navigate(self) -> None:
         self.page.goto(self.create_voucher_url)
-        self.page.wait_for_load_state("networkidle")
+
+    def _open_form(self, url: str) -> None:
+        self.page.goto(url)
+        self._form().wait_for(state="visible", timeout=10000)
 
     def navigate_contra(self) -> None:
-        self.page.goto(self.contra_voucher_url)
-        self.page.wait_for_load_state("networkidle")
-        self._form().wait_for(state="visible", timeout=10000)
+        self._open_form(self.contra_voucher_url)
 
     def navigate_journal(self) -> None:
-        self.page.goto(self.journal_voucher_url)
-        self.page.wait_for_load_state("networkidle")
-        self._form().wait_for(state="visible", timeout=10000)
+        self._open_form(self.journal_voucher_url)
 
     def select_voucher_type(self, voucher_type: str) -> None:
         label = self.TYPE_LABELS.get(voucher_type, voucher_type)
@@ -88,50 +85,27 @@ class CreateVoucherPage:
         # 1. Target specific React-Select control by index
         controls = self._form().locator(".react-select__control")
         if controls.count() > fallback_index:
-            rs_control = controls.nth(fallback_index)
-            rs_control.click()
-            self.page.wait_for_timeout(300)
+            controls.nth(fallback_index).click()
             self.page.keyboard.type(option_text)
-            self.page.wait_for_timeout(500)
-
-            # Match by filter_text if provided (e.g. branch name inside Cash Ledger label)
+            matches = self.page.locator(".react-select__option").filter(has_text=option_text)
+            # Same-named ledgers exist per branch (e.g. "Cash Ledger"); prefer the one labelled with the branch.
             if filter_text:
-                filtered = self.page.locator(".react-select__option").filter(has_text=filter_text).first
-                if filtered.count() > 0 and filtered.is_visible():
-                    filtered.click()
-                    self.page.wait_for_timeout(300)
+                branch_match = matches.filter(has_text=filter_text)
+                try:
+                    expect(branch_match.first).to_be_visible(timeout=3000)
+                    branch_match.first.click()
                     return
-
-            opt = self.page.locator(".react-select__option").filter(has_text=option_text).first
-            if opt.count() > 0 and opt.is_visible():
-                opt.click()
-                self.page.wait_for_timeout(300)
-                return
-            first_opt = self.page.locator(".react-select__option").first
-            if first_opt.count() > 0 and first_opt.is_visible():
-                first_opt.click()
-                self.page.wait_for_timeout(300)
-                return
-            self.page.keyboard.press("Enter")
-            self.page.wait_for_timeout(300)
+                except AssertionError:
+                    pass
+            matches.first.click()
             return
 
-        # 2. Try native <select name='...'>
         native = self._form().locator(f"select[name='{field_name}']")
         if native.count() > 0 and native.first.is_visible():
-            try:
-                native.first.select_option(label=option_text)
-            except Exception:
-                native.first.select_option(index=1)
+            native.first.select_option(label=option_text)
             return
 
-        # 3. Fallback to nth native select
-        selects = self._form().locator("select")
-        if selects.count() > fallback_index:
-            try:
-                selects.nth(fallback_index).select_option(label=option_text)
-            except Exception:
-                selects.nth(fallback_index).select_option(index=1)
+        self._form().locator("select").nth(fallback_index).select_option(label=option_text)
 
     def wait_for_success_toast(self, timeout: int = 10000) -> bool:
         try:
@@ -158,6 +132,48 @@ class CreateVoucherPage:
             return True
         except Exception:
             return False
+
+    @staticmethod
+    def _is_voucher_post(response) -> bool:
+        return response.request.method == "POST" and "/vouchers" in urlparse(response.url).path
+
+    @staticmethod
+    def _is_mdr_post(response) -> bool:
+        path = urlparse(response.url).path
+        return response.request.method == "POST" and (
+            "/vouchers" in path or ("mdr-settlement" in path and not path.endswith("/preview"))
+        )
+
+    def _submit_and_confirm(self, button, is_save_response=None) -> Response | None:
+        """Click submit and judge success by the save API; toasts are too short-lived to rely on."""
+        try:
+            with self.page.expect_response(is_save_response or self._is_voucher_post, timeout=15000) as info:
+                button.click()
+        except PlaywrightTimeoutError:
+            self._submission_succeeded = self.wait_for_success_toast(timeout=3000)
+            return None
+        self.last_voucher_response = info.value
+        self._submission_succeeded = info.value.ok
+        return info.value
+
+    def _fill_reference_if_required(self, reference: str) -> None:
+        ref_input = self._form().locator(
+            "input[placeholder*='MIG001'], input[placeholder*='e.g.'], input[name='referencePortion']"
+        )
+        if ref_input.count() > 0 and ref_input.first.is_visible():
+            ref_input.first.fill(reference)
+
+    def _ready_submit_button(self):
+        """Wait for outstanding bills to load; if the form still needs a bill picked, pick the first one."""
+        submit_btn = self._form().locator("button[type='submit']").first
+        try:
+            expect(submit_btn).to_be_enabled(timeout=10000)
+        except AssertionError:
+            bill_checkbox = self._form().locator("tbody input[type='checkbox']").first
+            if bill_checkbox.count() > 0 and bill_checkbox.is_visible():
+                bill_checkbox.check()
+            expect(submit_btn).to_be_enabled(timeout=5000)
+        return submit_btn
 
     def _submit_embedded(self) -> None:
         """Submit a drawer form and verify its success toast before it disappears."""
@@ -211,33 +227,25 @@ class CreateVoucherPage:
         return self._form().get_by_role("button", name="Create contra")
 
     def _select_native_option(self, select_locator, ledger_name: str, branch: str = "") -> None:
+        """Pick a ledger in a native select, preferring the option labelled with the branch."""
         if not select_locator.is_enabled():
             return
-        val = select_locator.evaluate(
-            """(el, args) => {
-                const { ledgerName, branchName } = args;
-                const options = Array.from(el.options);
-                if (branchName) {
-                    const match = options.find(o => o.text.includes(ledgerName) && o.text.includes(branchName));
-                    if (match) return match.value;
-                }
-                const exactMatch = options.find(o => o.text.trim() === ledgerName);
-                if (exactMatch) return exactMatch.value;
-
-                const partialMatch = options.find(o => o.text.includes(ledgerName));
-                if (partialMatch) return partialMatch.value;
-
-                return null;
-            }""",
-            {"ledgerName": ledger_name, "branchName": branch},
-        )
-        if val is not None:
-            select_locator.select_option(value=val)
-        else:
-            try:
-                select_locator.select_option(label=ledger_name)
-            except Exception:
-                pass
+        try:
+            value = self.page.wait_for_function(
+                """([el, ledgerName, branchName]) => {
+                    const options = Array.from(el.options);
+                    const has = (o, text) => o.text.toLowerCase().includes(text.toLowerCase());
+                    const match = (branchName && options.find(o => has(o, ledgerName) && has(o, branchName)))
+                        || options.find(o => o.text.trim() === ledgerName)
+                        || options.find(o => has(o, ledgerName));
+                    return match ? match.value : null;
+                }""",
+                arg=[select_locator.element_handle(), ledger_name, branch],
+                timeout=10000,
+            ).json_value()
+        except PlaywrightTimeoutError:
+            raise AssertionError(f"Ledger '{ledger_name}' never appeared in the dropdown") from None
+        select_locator.select_option(value=value)
 
     def create_contra_voucher(
         self,
@@ -250,7 +258,6 @@ class CreateVoucherPage:
         remarks: str = "",
     ) -> None:
         self._preset_select.select_option(preset)
-        self.page.wait_for_timeout(300)
         if debit_ledger:
             self._select_native_option(self._debit_ledger_select, debit_ledger, branch)
         if credit_ledger:
@@ -258,7 +265,7 @@ class CreateVoucherPage:
         self._amount_input.fill(amount)
         if remarks:
             self._remarks_textarea.fill(remarks)
-        self._contra_submit_button.click()
+        self._submit_and_confirm(self._contra_submit_button)
 
     def create_contra_custom(
         self, debit_ledger: str, credit_ledger: str, amount: str, remarks: str = "", branch: str = ""
@@ -305,28 +312,29 @@ class CreateVoucherPage:
         self.page.wait_for_url(lambda url: "/vouchers/history" in url, timeout=15000)
 
     def _set_allocation(self, allocation: str, bill_reference: str = "") -> None:
-        if allocation == "auto":
-            auto_radio = self.page.locator("#alloc-auto, input[value='auto']")
-            if auto_radio.count() and auto_radio.first.is_visible():
-                auto_radio.first.check()
-        elif allocation in {"on_account", "on-account", "advance"}:
-            oa_radio = self.page.locator("#alloc-on_account, #alloc-on-account, input[value='on_account'], input[value='on-account']")
-            if oa_radio.count() and oa_radio.first.is_visible():
-                oa_radio.first.check()
-        elif allocation == "manual":
-            manual_radio = self.page.locator("#alloc-manual, input[value='manual']")
-            if manual_radio.count() and manual_radio.first.is_visible():
-                manual_radio.first.check()
-
-            rows = self._form().locator("tbody tr")
-            if rows.count() > 0:
-                row = rows.filter(has_text=bill_reference).first if bill_reference else rows.first
-                if row.count() > 0 and row.is_visible():
-                    checkbox = row.locator("input[type='checkbox']")
-                    if checkbox.count() > 0 and checkbox.is_visible():
-                        checkbox.first.check()
-        else:
+        radios = {
+            "auto": "#alloc-auto, input[value='auto']",
+            "on_account": "#alloc-on_account, #alloc-on-account, input[value='on_account'], input[value='on-account']",
+            "manual": "#alloc-manual, input[value='manual']",
+        }
+        mode = "on_account" if allocation in {"on_account", "on-account", "advance"} else allocation
+        if mode not in radios:
             raise ValueError(f"Unsupported allocation mode: {allocation}")
+
+        radio = self.page.locator(radios[mode]).first
+        try:
+            expect(radio).to_be_visible(timeout=5000)
+        except AssertionError:
+            # Auto is the form default and the radios are hidden when the party has no bills.
+            if mode == "auto":
+                return
+            raise AssertionError(f"Allocation option '{mode}' is not available on the form") from None
+        radio.check()
+
+        if mode == "manual":
+            rows = self._form().locator("tbody tr")
+            row = rows.filter(has_text=bill_reference).first if bill_reference else rows.first
+            row.locator("input[type='checkbox']").first.check()
 
     @staticmethod
     def _is_payment_response(response) -> bool:
@@ -347,56 +355,19 @@ class CreateVoucherPage:
         remarks: str = "",
         reference: str = "",
     ) -> VoucherResult:
-        self.page.goto(self.payment_voucher_url)
-        self.page.wait_for_load_state("networkidle")
-        self.page.wait_for_timeout(500)
+        self._open_form(self.payment_voucher_url)
 
-        # 1. Select Branch (0th select)
         target_branch = branch if branch else "Branch-neutral"
         self._select_field("branchId", target_branch, fallback_index=0)
-        self.page.wait_for_timeout(400)
-
-        # 2. Select Debit ledger (1st select - Supplier / Party being paid)
         self._select_field("debitId", supplier_ledger, fallback_index=1)
-        self.page.wait_for_timeout(500)
-
-        # 3. Select Credit ledger (2nd select - Cash/Bank funding)
         self._select_field("creditId", cash_bank_ledger, fallback_index=2, filter_text=branch)
-        self.page.wait_for_timeout(400)
-
         self.fill_amount(amount)
-        self.page.wait_for_timeout(500)
-
         self._set_allocation(allocation, bill_reference)
-        self.page.wait_for_timeout(300)
-
         if remarks:
             self.fill_remarks(remarks)
+        self._fill_reference_if_required(reference or "PAY001")
 
-        # Handle manual reference portion if visible / required
-        ref_input = self._form().locator("input[placeholder*='MIG001'], input[placeholder*='e.g.'], input[name='referencePortion']")
-        if ref_input.count() > 0 and ref_input.first.is_visible():
-            ref_input.first.fill(reference or "PAY001")
-            self.page.wait_for_timeout(300)
-
-        submit_btn = self._form().locator("button[type='submit']").first
-        submit_btn.wait_for(state="visible", timeout=5000)
-
-        # Wait for async outstanding bills to load and enable the submit button
-        try:
-            self.page.wait_for_function(
-                "() => { const b = document.querySelector('form button[type=\"submit\"]'); return b && !b.disabled; }",
-                timeout=10000,
-            )
-        except Exception:
-            pass
-
-        if submit_btn.is_disabled():
-            bills_cb = self._form().locator("tbody input[type='checkbox']").first
-            if bills_cb.count() > 0 and bills_cb.is_visible():
-                bills_cb.check()
-                self.page.wait_for_timeout(500)
-
+        submit_btn = self._ready_submit_button()
         with self.page.expect_response(self._is_payment_response, timeout=15000) as info:
             submit_btn.click()
 
@@ -413,10 +384,8 @@ class CreateVoucherPage:
 
         response_data = response_body.get("data") or {}
         voucher_data = response_data.get("voucher") or {}
-        self._submission_succeeded = self.wait_for_success_toast(timeout=10000)
-        if not self._submission_succeeded and not self.wait_for_redirect_to_history(timeout=5000):
-            err_text = self.get_contra_validation_error()
-            raise RuntimeError(f"Payment voucher submission failed for {supplier_ledger}. Error: {err_text}")
+        self.last_voucher_response = response
+        self._submission_succeeded = True
 
         return VoucherResult(
             voucher_no=str(voucher_data.get("voucher_no") or reference),
@@ -455,57 +424,21 @@ class CreateVoucherPage:
         remarks: str = "",
         reference: str = "",
     ) -> VoucherResult:
-        self.page.goto(self.receipt_voucher_url)
-        self.page.wait_for_load_state("networkidle")
-        self.page.wait_for_timeout(500)
+        self._open_form(self.receipt_voucher_url)
 
         target_branch = branch if branch else "Branch-neutral"
         self._select_field("branchId", target_branch, fallback_index=0)
-        self.page.wait_for_timeout(400)
-
         self._select_field("debitId", cash_bank_ledger, fallback_index=1, filter_text=branch)
-        self.page.wait_for_timeout(400)
-
         self._select_field("creditId", customer_ledger, fallback_index=2)
-        self.page.wait_for_timeout(500)
-
         self.fill_amount(amount)
-        self.page.wait_for_timeout(500)
-
         self._set_allocation(allocation)
-        self.page.wait_for_timeout(300)
-
         if remarks:
             self.fill_remarks(remarks)
+        self._fill_reference_if_required(reference or "REC001")
 
-        # Handle manual reference portion if visible / required
-        ref_input = self._form().locator("input[placeholder*='MIG001'], input[placeholder*='e.g.'], input[name='referencePortion']")
-        if ref_input.count() > 0 and ref_input.first.is_visible():
-            ref_input.first.fill(reference or "REC001")
-            self.page.wait_for_timeout(300)
-
-        submit_btn = self._form().locator("button[type='submit']").first
-        submit_btn.wait_for(state="visible", timeout=5000)
-
-        # Wait for async outstanding bills to load and enable the submit button
-        try:
-            self.page.wait_for_function(
-                "() => { const b = document.querySelector('form button[type=\"submit\"]'); return b && !b.disabled; }",
-                timeout=10000,
-            )
-        except Exception:
-            pass
-
-        if submit_btn.is_disabled():
-            bills_cb = self._form().locator("tbody input[type='checkbox']").first
-            if bills_cb.count() > 0 and bills_cb.is_visible():
-                bills_cb.check()
-                self.page.wait_for_timeout(500)
-
-        submit_btn.click()
-        self._submission_succeeded = self.wait_for_success_toast(timeout=10000)
+        response = self._submit_and_confirm(self._ready_submit_button())
         if not self._submission_succeeded and not self.wait_for_redirect_to_history(timeout=5000):
-            err_text = self.get_contra_validation_error()
+            err_text = response.text()[:500] if response else self.get_contra_validation_error()
             raise RuntimeError(f"Receipt voucher submission failed for {customer_ledger}. Error: {err_text}")
 
         return VoucherResult(
@@ -542,43 +475,29 @@ class CreateVoucherPage:
         row = self._journal_rows().nth(index)
         row.wait_for(state="visible", timeout=5000)
 
-        # 1. Select ledger
         ledger_select = row.locator("select").first
         if ledger_select.count() > 0 and ledger_select.is_visible():
-            val = ledger_select.evaluate(
-                """(el, name) => {
-                    const options = Array.from(el.options);
-                    const opt = options.find(o => o.text.toLowerCase().includes(name.toLowerCase()));
-                    return opt ? opt.value : null;
-                }""",
-                ledger,
-            )
-            if val is not None:
-                ledger_select.select_option(value=val)
-            elif ledger_select.locator("option").count() > index + 1:
-                ledger_select.select_option(index=index + 1)
-        elif row.locator(".react-select__control").count() > 0:
-            rs_control = row.locator(".react-select__control").first
-            rs_control.click()
+            self._select_native_option(ledger_select, ledger)
+        else:
+            row.locator(".react-select__control").first.click()
             self.page.keyboard.type(ledger)
-            self.page.wait_for_timeout(300)
-            opt = self.page.locator(".react-select__option").filter(has_text=re.compile(re.escape(ledger), re.I)).first
-            if opt.count() > 0 and opt.is_visible():
-                opt.click()
-            else:
-                self.page.keyboard.press("Enter")
+            self.page.locator(".react-select__option").filter(
+                has_text=re.compile(re.escape(ledger), re.I)
+            ).first.click()
 
-        # 2. Select DR / CR
         target_is_dr = dr_cr.lower() in {"dr", "debit"}
         dr_cr_select = row.locator("select").nth(1)
         if dr_cr_select.count() > 0 and dr_cr_select.is_visible():
-            try:
-                dr_cr_select.select_option(value="dr" if target_is_dr else "cr")
-            except Exception:
-                try:
-                    dr_cr_select.select_option(index=0 if target_is_dr else 1)
-                except Exception:
-                    pass
+            value = dr_cr_select.evaluate(
+                """(el, prefix) => {
+                    const o = Array.from(el.options).find(o => (o.value + o.text).trim().toLowerCase().startsWith(prefix));
+                    return o ? o.value : null;
+                }""",
+                "d" if target_is_dr else "c",
+            )
+            if value is None:
+                raise AssertionError(f"No {'Dr' if target_is_dr else 'Cr'} option in journal line {index}")
+            dr_cr_select.select_option(value=value)
 
         # 3. Fill amount
         num_input = row.locator("input[type='number']").first
@@ -602,14 +521,8 @@ class CreateVoucherPage:
             )
         if remarks:
             self.fill_remarks(remarks)
-        self.page.wait_for_timeout(300)
         if self.is_submit_enabled():
-            with self.page.expect_response(
-                lambda r: "/vouchers" in r.url and r.request.method == "POST", timeout=15000
-            ) as resp_info:
-                self.click_submit()
-            if resp_info.value.status in (200, 201):
-                self._submission_succeeded = True
+            self._submit_and_confirm(self.submit_button())
 
     def submit_journal_without_redirect(self) -> None:
         if self.is_submit_enabled():
@@ -627,68 +540,25 @@ class CreateVoucherPage:
         self.fill_amount(amount)
         self.select_native(1, cash_bank_ledger)
         if self.is_submit_enabled():
-            self.click_submit()
+            self._submit_and_confirm(self.submit_button())
 
     def prepare_mdr(self, bank_name: str, mdr_amount: str, settlement_date: str = "") -> None:
-        try:
-            self.page.goto(f"{BASE_URL}/vouchers/mdr/create")
-            self.page.wait_for_load_state("networkidle")
-        except Exception:
-            self.navigate()
-            self.select_voucher_type("MDR Settlement")
-        self.page.wait_for_timeout(500)
+        self._open_form(self.mdr_settlement_url)
 
         if settlement_date:
             date_input = self._form().locator("input[type='date']").first
             if date_input.count() > 0 and date_input.is_visible():
                 date_input.fill(settlement_date)
-                self.page.wait_for_timeout(200)
 
         bank_select = self._form().locator("select").first
-        bank_select.wait_for(state="visible", timeout=10000)
         try:
-            self.page.wait_for_function(
-                """(sel) => sel && sel.options && sel.options.length > 1""",
-                bank_select.element_handle(),
-                timeout=8000,
-            )
-        except Exception:
-            pass
+            with self.page.expect_response(
+                lambda r: "/accounting/mdr-settlement/preview" in r.url, timeout=10000
+            ):
+                self._select_native_option(bank_select, bank_name)
+        except PlaywrightTimeoutError:
+            pass  # The preview only loads when the bank has unsettled card sales.
 
-        bank_value = bank_select.evaluate(
-            """(select, wanted) => {
-                const option = Array.from(select.options).find(
-                    item => item.text.trim() === wanted || item.text.toLowerCase().includes(wanted.toLowerCase())
-                );
-                return option ? option.value : null;
-            }""",
-            bank_name,
-        )
-
-        if bank_value:
-            bank_select.select_option(value=bank_value)
-            bank_select.dispatch_event("change")
-            try:
-                self.page.wait_for_response(
-                    lambda r: "/accounting/mdr-settlement/preview" in r.url,
-                    timeout=10000,
-                )
-            except Exception:
-                pass
-        else:
-            options = bank_select.locator("option").all()
-            if len(options) > 1:
-                bank_select.select_option(index=1)
-                bank_select.dispatch_event("change")
-                try:
-                    self.page.wait_for_response(
-                        lambda r: "/accounting/mdr-settlement/preview" in r.url,
-                        timeout=10000,
-                    )
-                except Exception:
-                    pass
-
-        self.page.wait_for_timeout(500)
         num_input = self._form().locator("input[type='number']").first
         if num_input.count() > 0 and num_input.is_visible():
             num_input.fill(str(mdr_amount))
@@ -712,23 +582,10 @@ class CreateVoucherPage:
         if submit_btn.count() == 0 or not submit_btn.is_visible():
             submit_btn = self._form().get_by_role("button", name=re.compile(r"Create|Submit", re.I)).first
 
-        submit_btn.wait_for(state="visible", timeout=10000)
-        try:
-            self.page.wait_for_function(
-                "(btn) => !btn.disabled",
-                submit_btn.element_handle(),
-                timeout=10000,
-            )
-        except Exception:
-            pass
-
-        if submit_btn.is_enabled():
-            submit_btn.click()
-            self._submission_succeeded = True
-            try:
-                self.wait_for_redirect_to_history(timeout=10000)
-            except Exception:
-                pass
+        expect(submit_btn).to_be_enabled(timeout=10000)
+        self._submit_and_confirm(submit_btn, self._is_mdr_post)
+        if self._submission_succeeded:
+            self.wait_for_redirect_to_history(timeout=10000)
 
     def submit_payment_without_redirect(self) -> None:
         if self.is_submit_enabled():

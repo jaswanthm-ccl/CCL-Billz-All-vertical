@@ -9,13 +9,14 @@ from urllib.parse import parse_qs, urlparse
 
 from playwright.sync_api import Page, Response
 
-from utils.res_constants import RESTAURANT_BASE_URL
+from pages.common.base_page import BasePage
+from utils.tenants import RESTAURANT, Tenant
 
 
-class RestaurantIncentiveReportPage:
-    def __init__(self, page: Page, *, route: str, endpoint: str) -> None:
-        self.page = page
-        self.url = f"{RESTAURANT_BASE_URL}{route}"
+class RestaurantIncentiveReportPage(BasePage):
+    def __init__(self, page: Page, *, route: str, endpoint: str, tenant: Tenant = RESTAURANT) -> None:
+        super().__init__(page, tenant)
+        self.url = tenant.url(route)
         self.endpoint = endpoint
         self.last_data: dict[str, Any] = {}
 

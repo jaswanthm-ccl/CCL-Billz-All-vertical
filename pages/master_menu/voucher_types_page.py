@@ -6,7 +6,7 @@ from playwright.sync_api import Page, Response
 
 from pages.common.base_page import BasePage
 from pages.common.form_page import has_validation_feedback
-from utils.tenants import RETAIL, Tenant
+from utils.tenants import Tenant
 from utils.constants import (
     LIST_TIMEOUT,
     UI_TIMEOUT,
@@ -16,7 +16,7 @@ from utils.constants import (
 class VoucherTypesPage(BasePage):
     PATH = "/voucher-types"
 
-    def __init__(self, page: Page, tenant: Tenant = RETAIL) -> None:
+    def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
         super().__init__(page, tenant)
 
     # Legacy alias: unmigrated callers still assign voucher_types_url directly.

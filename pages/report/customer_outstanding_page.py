@@ -8,16 +8,17 @@ from urllib.parse import parse_qs, urlparse
 
 from playwright.sync_api import Download, Page, Response
 
-from utils.constants import CUSTOMER_OUTSTANDING_URL
+from pages.common.base_page import BasePage
+from utils.tenants import Tenant
 
 
-class CustomerOutstandingPage:
+class CustomerOutstandingPage(BasePage):
     """Customer Outstanding report interactions and API-backed assertions."""
 
     REPORT_NAME = "Customer Outstanding"
     API_PATH_SUFFIX = "/accounting/customer-outstanding"
     SEARCH_PLACEHOLDER = "Search customer…"
-    REPORT_URL = CUSTOMER_OUTSTANDING_URL
+    PATH = "/reports/customer-outstanding"
     EXPECTED_HEADERS = [
         "CUSTOMER",
         "LEDGER",
@@ -28,9 +29,8 @@ class CustomerOutstandingPage:
         "ACTIONS",
     ]
 
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.url = self.REPORT_URL
+    def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
+        super().__init__(page, tenant)
         self.last_data: dict[str, Any] = {}
 
     @staticmethod

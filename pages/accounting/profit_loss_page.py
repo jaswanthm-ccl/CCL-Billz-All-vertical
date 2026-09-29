@@ -5,15 +5,17 @@ from decimal import Decimal
 
 from playwright.sync_api import Page, expect
 
-from utils.constants import PROFIT_LOSS_URL
+from pages.common.base_page import BasePage
+from utils.tenants import Tenant
 
 
-class ProfitLossPage:
+class ProfitLossPage(BasePage):
     """Page object for the non-restaurant Profit / Loss report."""
 
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.url = PROFIT_LOSS_URL
+    PATH = "/reports/profit-loss"
+
+    def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
+        super().__init__(page, tenant)
         self.report: dict = {}
         self.last_status: int | None = None
 

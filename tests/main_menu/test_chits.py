@@ -415,10 +415,6 @@ def test_chit_payment_list_total_is_not_double_counted(
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.xfail(
-    reason="Application defect: Closed chits are still listed in the Record Payment dropdown",
-    strict=False,
-)
 def test_closed_chit_not_in_payment_dropdown(logged_in_page, module_branch):
     """Close a chit and verify it does NOT appear in the Record Payment dropdown."""
     chits_page = ChitsPage(logged_in_page)

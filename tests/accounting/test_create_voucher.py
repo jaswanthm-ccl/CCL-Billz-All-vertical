@@ -462,6 +462,7 @@ class TestReceiptVoucher:
             customer_ledger=customer,
             cash_bank_ledger=bank_name,
             amount="50",
+            branch=module_outstanding_sale["branch"],
             allocation="auto",
             remarks="Receipt via bank",
         )
@@ -489,14 +490,17 @@ class TestChitEntryVoucher:
 
         page.create_chit_entry_voucher(
             chit_ledger=module_chit,
-            cash_bank_ledger="Cash Ledger",
+            cash_bank_ledger=voucher_funded_state["bank"],
             amount="100",
         )
 
         redirected = page.wait_for_redirect_to_history()
         success = page.wait_for_success_toast(timeout=3000) if not redirected else True
 
-        assert redirected or success, "Chit entry voucher was not created"
+        response = page.last_voucher_response
+        assert redirected or success, (
+            f"Chit entry voucher was not created: {response.text()[:300] if response else 'no save request sent'}"
+        )
 
     def test_chit_entry_missing_amount_rejected(self, logged_in_page, voucher_funded_state):
         """Chit entry with no amount should be rejected."""

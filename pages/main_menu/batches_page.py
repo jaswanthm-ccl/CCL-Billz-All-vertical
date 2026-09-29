@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import re
 from playwright.sync_api import Page
-from utils.constants import BATCHES_URL
+from pages.common.base_page import BasePage
+from utils.tenants import Tenant
 
-class BatchesPage:
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.url = BATCHES_URL
+class BatchesPage(BasePage):
+    PATH = "/batches"
+
+    def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
+        super().__init__(page, tenant)
 
     def navigate(self) -> None:
         self.page.goto(self.url)

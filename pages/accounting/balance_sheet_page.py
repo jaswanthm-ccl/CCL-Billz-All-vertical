@@ -6,15 +6,17 @@ from typing import Callable
 
 from playwright.sync_api import Page
 
-from utils.constants import BALANCE_SHEET_URL
+from pages.common.base_page import BasePage
+from utils.tenants import Tenant
 
 
-class BalanceSheetPage:
+class BalanceSheetPage(BasePage):
     """Page object for the Balance Sheet report."""
 
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.url = BALANCE_SHEET_URL
+    PATH = "/reports/balance-sheet"
+
+    def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
+        super().__init__(page, tenant)
         self.report: dict = {}
         self.last_status: int | None = None
 

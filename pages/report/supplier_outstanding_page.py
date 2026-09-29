@@ -1,5 +1,4 @@
 from pages.report.customer_outstanding_page import CustomerOutstandingPage
-from utils.constants import SUPPLIER_OUTSTANDING_URL
 
 
 class SupplierOutstandingPage(CustomerOutstandingPage):
@@ -8,7 +7,7 @@ class SupplierOutstandingPage(CustomerOutstandingPage):
     REPORT_NAME = "Supplier Outstanding"
     API_PATH_SUFFIX = "/accounting/supplier-outstanding"
     SEARCH_PLACEHOLDER = "Search supplier…"
-    REPORT_URL = SUPPLIER_OUTSTANDING_URL
+    PATH = "/reports/supplier-outstanding"
     EXPECTED_HEADERS = [
         "SUPPLIER",
         "LEDGER",

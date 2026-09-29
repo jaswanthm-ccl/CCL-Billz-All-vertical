@@ -10,18 +10,19 @@ from urllib.parse import parse_qs, urlparse
 
 from playwright.sync_api import Download, Page, Response
 
+from pages.common.base_page import BasePage
+from utils.tenants import Tenant
 
-class Gstr1ReportPage:
+
+class Gstr1ReportPage(BasePage):
     """Shared strict interactions for GSTR-1 preview, filters, and exports."""
 
     REPORT_NAME = ""
     API_PATH_SUFFIX = ""
-    REPORT_URL = ""
     EXPECTED_HEADERS: list[str] = []
 
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.url = self.REPORT_URL
+    def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
+        super().__init__(page, tenant)
         self.last_data: dict[str, Any] | None = None
 
     @staticmethod

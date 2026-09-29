@@ -10,15 +10,14 @@ import re
 from playwright.sync_api import Page
 
 from pages.report.outstanding_bills_page import OutstandingBillsPage as SharedOutstandingBillsPage
-from utils.res_constants import RES_OUTSTANDING_BILLS_URL
+from utils.tenants import RESTAURANT, Tenant
 
 
 class OutstandingBillsPage(SharedOutstandingBillsPage):
     """Restaurant adapter for the Outstanding Bills report page."""
 
-    def __init__(self, page: Page) -> None:
-        super().__init__(page)
-        self.url = RES_OUTSTANDING_BILLS_URL
+    def __init__(self, page: Page, tenant: Tenant = RESTAURANT) -> None:
+        super().__init__(page, tenant)
 
     def expand_filters(self) -> None:
         """Expand the modern filter panel so type/status selects become visible."""

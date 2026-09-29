@@ -12,15 +12,14 @@ from urllib.parse import urlparse
 from playwright.sync_api import Page, Response
 
 from pages.report.stock_summary_page import StockSummaryPage as SharedStockSummaryPage
-from utils.res_constants import RES_STOCK_SUMMARY_URL
+from utils.tenants import RESTAURANT, Tenant
 
 
 class StockSummaryPage(SharedStockSummaryPage):
     """Restaurant adapter for the Stock Summary report page."""
 
-    def __init__(self, page: Page) -> None:
-        super().__init__(page)
-        self.url = RES_STOCK_SUMMARY_URL
+    def __init__(self, page: Page, tenant: Tenant = RESTAURANT) -> None:
+        super().__init__(page, tenant)
 
     def _capture(
         self,

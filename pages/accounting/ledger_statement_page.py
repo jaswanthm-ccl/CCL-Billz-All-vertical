@@ -6,13 +6,12 @@ from urllib.parse import urlparse
 
 from playwright.sync_api import Page
 
-from utils.constants import BASE_URL
+from pages.common.base_page import BasePage
+from utils.tenants import Tenant
 
 
-LEDGER_STATEMENT_URL = f"{BASE_URL}/reports/ledger-statement"
 
-
-class LedgerStatementPage:
+class LedgerStatementPage(BasePage):
     """Page object for the Ledger Statement report (/reports/ledger-statement).
 
     Filters:
@@ -29,9 +28,10 @@ class LedgerStatementPage:
     Table columns: Date, Voucher ID, Narration, Debit, Credit, Running Balance
     """
 
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.url = LEDGER_STATEMENT_URL
+    PATH = "/reports/ledger-statement"
+
+    def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
+        super().__init__(page, tenant)
 
     # ══════════════════════════════════════════════════════════════════════════
     # NAVIGATION

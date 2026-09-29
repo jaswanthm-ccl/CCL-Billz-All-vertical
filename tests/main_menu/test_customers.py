@@ -3,7 +3,7 @@ import random
 from pages.main_menu.customers_page import CustomersPage
 from pages.master_menu.cities_page import CitiesPage
 from pages.master_menu.branches_page import BranchesPage
-from utils.constants import BASE_URL, SALES_URL
+from utils.tenants import active_tenant
 from utils.random_data import (
     generate_random_name,
     generate_random_email,
@@ -12,6 +12,9 @@ from utils.random_data import (
     generate_random_address,
     generate_random_gst,
 )
+
+BASE_URL = active_tenant().url()
+SALES_URL = active_tenant().url("/sales")
 
 
 # ---------------------------------------------------------------------------

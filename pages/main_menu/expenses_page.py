@@ -3,12 +3,11 @@ from __future__ import annotations
 import re
 from playwright.sync_api import Page
 
-from utils.constants import BASE_URL
+from pages.common.base_page import BasePage
+from utils.tenants import Tenant
 
-EXPENSES_URL = f"{BASE_URL}/expenses"
 
-
-class ExpensesPage:
+class ExpensesPage(BasePage):
     """Page object for the Expenses module (/expenses).
 
     Form fields (Add Expense modal):
@@ -23,9 +22,10 @@ class ExpensesPage:
     List table columns: DATE, CATEGORY, AMOUNT, BRANCH, PAID FROM, DESCRIPTION, STATUS, Actions
     """
 
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.url = EXPENSES_URL
+    PATH = "/expenses"
+
+    def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
+        super().__init__(page, tenant)
 
     def navigate(self) -> None:
         self.page.goto(self.url)

@@ -2,12 +2,11 @@ from __future__ import annotations
 import re
 from playwright.sync_api import Page
 
-from utils.constants import BASE_URL
+from pages.common.base_page import BasePage
+from utils.tenants import Tenant
 
-VOUCHER_HISTORY_URL = f"{BASE_URL}/vouchers/history"
 
-
-class VoucherHistoryPage:
+class VoucherHistoryPage(BasePage):
     """Page object for the Voucher History page (/vouchers/history).
 
     Displays a searchable, filterable, paginated list of all posted vouchers.
@@ -19,9 +18,10 @@ class VoucherHistoryPage:
     View: clicking 'View' navigates to /vouchers/:id detail page
     """
 
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.url = VOUCHER_HISTORY_URL
+    PATH = "/vouchers/history"
+
+    def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
+        super().__init__(page, tenant)
 
     # ─── Navigation ────────────────────────────────────────────────────────────
 

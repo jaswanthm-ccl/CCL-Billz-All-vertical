@@ -4,15 +4,15 @@ from playwright.sync_api import Locator
 from urllib.parse import urlparse
 
 from pages.main_menu.purchases_page import PurchasesPage as DefaultPurchasesPage
-from utils.res_constants import RES_PURCHASES_URL, SEARCH_DEBOUNCE_MS
+from utils.res_constants import SEARCH_DEBOUNCE_MS
+from utils.tenants import RESTAURANT, Tenant
 
 
 class PurchasesPage(DefaultPurchasesPage):
     """Use the shared Purchase contract against the Restaurant tenant."""
 
-    def __init__(self, page) -> None:
-        super().__init__(page)
-        self.url = RES_PURCHASES_URL
+    def __init__(self, page, tenant: Tenant = RESTAURANT) -> None:
+        super().__init__(page, tenant)
         self.last_created_purchase: dict = {}
         self._purchase_submission_in_progress = False
 

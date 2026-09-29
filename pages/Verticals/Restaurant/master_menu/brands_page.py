@@ -4,7 +4,8 @@ import re
 
 from playwright.sync_api import Page, Response
 
-from utils.res_constants import RESTAURANT_BASE_URL
+from pages.common.base_page import BasePage
+from utils.tenants import RESTAURANT, Tenant
 from utils.constants import (
     LIST_TIMEOUT,
     SETTLED_TIMEOUT,
@@ -17,10 +18,20 @@ DELETE_ICON_BUTTON = 'button[title="delete"]:has(i.bi-trash)'
 RETRIEVE_ICON_BUTTON = 'button[title="delete"]:has(i.bi-arrow-clockwise)'
 
 
-class BrandsPage:
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.brands_url = f"{RESTAURANT_BASE_URL}/brands"
+class BrandsPage(BasePage):
+    PATH = "/brands"
+
+    def __init__(self, page: Page, tenant: Tenant = RESTAURANT) -> None:
+        super().__init__(page, tenant)
+
+    # Legacy alias: unmigrated callers still assign brands_url directly.
+    @property
+    def brands_url(self) -> str:
+        return self.url
+
+    @brands_url.setter
+    def brands_url(self, value: str) -> None:
+        self.url = value
 
     @property
     def add_button(self):

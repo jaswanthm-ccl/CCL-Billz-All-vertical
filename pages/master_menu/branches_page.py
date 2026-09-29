@@ -6,7 +6,7 @@ from playwright.sync_api import Page, Response, expect
 
 from utils.constants import LIST_TIMEOUT, UI_TIMEOUT
 from utils.random_data import generate_random_address, generate_random_name, generate_random_code, generate_random_phone, generate_random_postal_code, generate_random_email
-from utils.tenants import RETAIL, Tenant
+from utils.tenants import Tenant
 from pages.common.base_page import BasePage
 from pages.common.form_page import has_validation_feedback
 from pages.master_menu.cities_page import CitiesPage
@@ -19,7 +19,7 @@ class BranchesPage(BasePage):
     # can still find and delete the cities that belong to a branch.
     _auto_cities: dict[str, list[str]] = {}
 
-    def __init__(self, page: Page, tenant: Tenant = RETAIL) -> None:
+    def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
         super().__init__(page, tenant)
 
     # Legacy alias: unmigrated callers still assign branches_url directly.

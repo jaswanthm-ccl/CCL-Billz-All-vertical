@@ -7,10 +7,11 @@ from urllib.parse import parse_qs, urlparse
 
 from playwright.sync_api import Page, Response
 
-from utils.constants import MDR_REPORT_URL
+from pages.common.base_page import BasePage
+from utils.tenants import Tenant
 
 
-class MdrReportPage:
+class MdrReportPage(BasePage):
     """MDR Report interactions with API-backed report assertions."""
 
     SUMMARY_HEADERS = [
@@ -32,9 +33,10 @@ class MdrReportPage:
         "Narration",
     ]
 
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.url = MDR_REPORT_URL
+    PATH = "/reports/mdr-report"
+
+    def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
+        super().__init__(page, tenant)
         self.last_data: dict[str, Any] = {}
 
     @staticmethod

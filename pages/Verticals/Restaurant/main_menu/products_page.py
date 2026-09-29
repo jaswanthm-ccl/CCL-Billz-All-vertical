@@ -7,14 +7,16 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from playwright.sync_api import Page, Locator
-from utils.res_constants import RES_PRODUCTS_URL
+from pages.common.base_page import BasePage
+from utils.tenants import RESTAURANT, Tenant
 from utils.random_data import generate_random_code
 
 
-class ProductsPage:
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.url = RES_PRODUCTS_URL
+class ProductsPage(BasePage):
+    PATH = "/products"
+
+    def __init__(self, page: Page, tenant: Tenant = RESTAURANT) -> None:
+        super().__init__(page, tenant)
 
     def navigate(self) -> None:
         self.page.goto(self.url)

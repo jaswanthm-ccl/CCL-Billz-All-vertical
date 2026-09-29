@@ -4,8 +4,9 @@ import re
 from typing import Any
 from playwright.sync_api import Page
 
+from pages.common.base_page import BasePage
+from utils.tenants import Tenant
 from utils.constants import (
-    EMI_RECONCILIATION_URL,
     LIST_TIMEOUT,
     SEARCH_DEBOUNCE_MS,
     SETTLED_TIMEOUT,
@@ -21,10 +22,11 @@ def _parse_currency(text: str) -> Decimal:
     return Decimal(cleaned) if cleaned else Decimal("0.00")
 
 
-class EmiReconciliationPage:
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.url = EMI_RECONCILIATION_URL
+class EmiReconciliationPage(BasePage):
+    PATH = "/reports/emi-provider-reconciliation"
+
+    def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
+        super().__init__(page, tenant)
 
     def navigate(self) -> None:
         self.page.goto(self.url)

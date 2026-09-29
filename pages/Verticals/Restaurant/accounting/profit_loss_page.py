@@ -10,13 +10,11 @@ from __future__ import annotations
 from playwright.sync_api import Page
 
 from pages.accounting.profit_loss_page import ProfitLossPage as BaseProfitLossPage
-from utils.res_constants import RES_PROFIT_LOSS_URL
+from utils.tenants import RESTAURANT, Tenant
 
 
 class ProfitLossPage(BaseProfitLossPage):
     """Page object for the Restaurant-vertical Profit / Loss report."""
 
-    def __init__(self, page: Page) -> None:
-        super().__init__(page)
-        # Override the URL to point at the Restaurant app
-        self.url = RES_PROFIT_LOSS_URL
+    def __init__(self, page: Page, tenant: Tenant = RESTAURANT) -> None:
+        super().__init__(page, tenant)

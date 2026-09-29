@@ -13,13 +13,15 @@ from __future__ import annotations
 import re
 from typing import Any
 from playwright.sync_api import Page, Locator
-from utils.res_constants import RES_GRN_URL, RES_PURCHASE_REQUESTS_URL
+from pages.common.base_page import BasePage
+from utils.tenants import RESTAURANT, Tenant
 
 
-class GrnPage:
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.url = RES_GRN_URL
+class GrnPage(BasePage):
+    PATH = "/grn"
+
+    def __init__(self, page: Page, tenant: Tenant = RESTAURANT) -> None:
+        super().__init__(page, tenant)
 
     def navigate(self) -> None:
         self.page.goto(self.url)
@@ -55,7 +57,7 @@ class GrnPage:
         quantity: str = "10",
     ) -> int:
         """Creates a purchase order in restaurant tenant and clicks the GRN action button to open /grn/create/:id."""
-        self.page.goto(f"{RES_PURCHASE_REQUESTS_URL}/add")
+        self.page.goto(self.tenant.url("/purchase-requests/add"))
         self.page.wait_for_load_state("networkidle")
 
         # 1. Branch selection (if visible in form)

@@ -219,8 +219,7 @@ def res_supplier(browser, res_auth_state):
 
     context = browser.new_context(storage_state=res_auth_state, ignore_https_errors=True)
     page = context.new_page()
-    supp_page = SuppliersPage(page)
-    supp_page.url = f"{RESTAURANT_BASE_URL}/suppliers"
+    supp_page = SuppliersPage(page, RESTAURANT)
     supp_page.navigate()
     supp_name = generate_random_name("ResSupp")
     supp_page.add_supplier(
@@ -238,8 +237,7 @@ def res_supplier(browser, res_auth_state):
     td_context = browser.new_context(storage_state=res_auth_state, ignore_https_errors=True)
     td_page = td_context.new_page()
     try:
-        td_supp_page = SuppliersPage(td_page)
-        td_supp_page.url = f"{RESTAURANT_BASE_URL}/suppliers"
+        td_supp_page = SuppliersPage(td_page, RESTAURANT)
         td_supp_page.navigate()
         td_supp_page.delete_supplier(supp_name)
     except Exception as e:

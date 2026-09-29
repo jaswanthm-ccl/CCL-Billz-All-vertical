@@ -12,13 +12,15 @@ from __future__ import annotations
 import re
 from decimal import Decimal
 from playwright.sync_api import Page, Locator
-from utils.res_constants import RES_INVENTORIES_URL
+from pages.common.base_page import BasePage
+from utils.tenants import RESTAURANT, Tenant
 
 
-class InventoriesPage:
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.url = RES_INVENTORIES_URL
+class InventoriesPage(BasePage):
+    PATH = "/inventories"
+
+    def __init__(self, page: Page, tenant: Tenant = RESTAURANT) -> None:
+        super().__init__(page, tenant)
 
     def navigate(self) -> None:
         self.page.goto(self.url)

@@ -3,13 +3,15 @@ from __future__ import annotations
 import re
 from decimal import Decimal
 from playwright.sync_api import Page, Locator
-from utils.constants import INVENTORIES_URL
+from pages.common.base_page import BasePage
+from utils.tenants import Tenant
 
 
-class InventoriesPage:
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.url = INVENTORIES_URL
+class InventoriesPage(BasePage):
+    PATH = "/inventories"
+
+    def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
+        super().__init__(page, tenant)
 
     def navigate(self) -> None:
         self.page.goto(self.url)
@@ -99,6 +101,17 @@ class InventoriesPage:
         match = re.match(r"(\d+(?:\.\d+)?)", stock_str)
         return Decimal(match.group(1)) if match else Decimal("0")
 
+    def get_available_units(self, product_name: str, attribute_name: str) -> list[str]:
+        """Tracked unit values (e.g. serial numbers) listed in the AVAILABLE UNITS column for the product."""
+        if not self.search_inventory(product_name):
+            return []
+        headers = [h.strip().upper() for h in self.page.locator("thead th").all_inner_texts()]
+        if "AVAILABLE UNITS" not in headers:
+            return []
+        row = self.page.locator("table tbody tr").filter(has_text=product_name).first
+        cell_text = row.locator("td").nth(headers.index("AVAILABLE UNITS")).inner_text()
+        return re.findall(rf"{re.escape(attribute_name)}:\s*(\S+)", cell_text)
+
     def get_total_stock_number(self, product_name: str) -> Decimal:
         values = self.get_stock_values(product_name)
         stock_str = values.get("total_stock", "0")
@@ -150,7 +163,12 @@ class InventoriesPage:
     def toggle_low_stock_filter(self) -> None:
         self.expand_filters()
         self.page.locator("input[name='low_stock_only']").check()
-        self.page.get_by_role("button", name="Filter", exact=True).click()
+        with self.page.expect_response(
+            lambda r: "/inventories" in r.url and "low_stock_only=true" in r.url
+        ) as response_info:
+            self.page.get_by_role("button", name="Filter", exact=True).click()
+        response_info.value.finished()
+        self.page.wait_for_load_state("networkidle", timeout=5000)
 
     def clear_filters(self) -> None:
         self.expand_filters()
@@ -241,8 +259,8 @@ class InventoriesPage:
 
         with self.page.expect_download(timeout=15000) as download_info:
             self.page.locator("div.modal-content, div[role='dialog']").get_by_role(
-                "button", name="Filter"
-            ).click()
+                "button", name=re.compile(r"^(?:Export PDF|Filter)$")
+            ).first.click()
 
         download = download_info.value
         return download.path()

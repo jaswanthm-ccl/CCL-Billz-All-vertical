@@ -1,13 +1,40 @@
 from __future__ import annotations
 
 import re
-from playwright.sync_api import Page
-from utils.constants import PURCHASE_RETURNS_URL
+from urllib.parse import urlparse
+from playwright.sync_api import Page, Response
+from pages.common.base_page import BasePage
+from pages.common.components import ReactSelect
+from utils.constants import LIST_TIMEOUT, UI_TIMEOUT
+from utils.tenants import Tenant
 
-class PurchaseReturnsPage:
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.url = PURCHASE_RETURNS_URL
+class PurchaseReturnsPage(BasePage):
+    PATH = "/purchase-returns"
+
+    def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
+        super().__init__(page, tenant)
+
+    def return_serials(self, serials: list[str], line_index: int = 0) -> Response:
+        """In the open Purchase Return dialog, return the given tracked serials on one line; returns the API response."""
+        return_dialog = self.page.get_by_role("dialog").filter(has_text="Purchase Return").last
+        return_dialog.wait_for(state="visible", timeout=UI_TIMEOUT)
+        return_dialog.locator(f"input[name='items.{line_index}.included']").check()
+        return_dialog.get_by_role("button", name=re.compile(r"^Select ")).nth(line_index).click()
+
+        picker = self.page.get_by_role("dialog").filter(has_text="Choose returnable").last
+        picker.wait_for(state="visible", timeout=UI_TIMEOUT)
+        serial_select = ReactSelect(self.page, picker.locator(".react-select__control").first)
+        for serial in serials:
+            serial_select.select(serial)
+        picker.get_by_role("button", name="Done").click()
+        picker.wait_for(state="hidden", timeout=UI_TIMEOUT)
+
+        with self.page.expect_response(
+            lambda r: r.request.method == "POST" and urlparse(r.url).path.rstrip("/").endswith("/purchase-return"),
+            timeout=LIST_TIMEOUT,
+        ) as response_info:
+            return_dialog.get_by_role("button", name="Return").click()
+        return response_info.value
 
     def navigate(self) -> None:
         self.page.goto(self.url)

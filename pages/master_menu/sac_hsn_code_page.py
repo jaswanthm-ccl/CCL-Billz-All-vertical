@@ -6,7 +6,7 @@ from playwright.sync_api import Page, Response, expect
 
 from pages.common.form_page import has_validation_feedback
 from pages.common.base_page import BasePage
-from utils.tenants import RETAIL, Tenant
+from utils.tenants import Tenant
 from utils.constants import LIST_TIMEOUT, SETTLED_TIMEOUT, UI_TIMEOUT
 
 
@@ -17,7 +17,7 @@ RETRIEVE_ICON_BUTTON = 'button[title="delete"]:has(i.bi-arrow-clockwise)'
 class SacHsnCodePage(BasePage):
     PATH = "/gst-codes"
 
-    def __init__(self, page: Page, tenant: Tenant = RETAIL) -> None:
+    def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
         super().__init__(page, tenant)
 
     # Legacy alias: unmigrated callers still assign sac_hsn_url directly.

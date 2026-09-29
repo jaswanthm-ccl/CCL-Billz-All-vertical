@@ -18,13 +18,15 @@ import re
 from datetime import date, timedelta
 from typing import Any
 from playwright.sync_api import Page, Locator
-from utils.res_constants import RES_OUTDOOR_BILLING_URL
+from pages.common.base_page import BasePage
+from utils.tenants import RESTAURANT, Tenant
 
 
-class OutdoorBillingPage:
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.url = RES_OUTDOOR_BILLING_URL
+class OutdoorBillingPage(BasePage):
+    PATH = "/outdoor-billing"
+
+    def __init__(self, page: Page, tenant: Tenant = RESTAURANT) -> None:
+        super().__init__(page, tenant)
 
     def navigate(self) -> None:
         self.page.goto(self.url)

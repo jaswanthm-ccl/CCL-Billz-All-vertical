@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import re
 from decimal import Decimal, InvalidOperation
-from playwright.sync_api import Page, Locator
-from utils.constants import PURCHASES_URL
+from urllib.parse import urlparse
+from playwright.sync_api import Page, Locator, Response
+from pages.common.base_page import BasePage
 from utils.models import PurchaseResult
+from utils.tenants import Tenant
 
 
-class PurchasesPage:
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.url = PURCHASES_URL
+class PurchasesPage(BasePage):
+    PATH = "/purchases"
+
+    def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
+        super().__init__(page, tenant)
+        self.last_purchase_response: dict = {}
 
     def navigate(self) -> None:
         self.page.goto(self.url)
@@ -79,6 +83,9 @@ class PurchasesPage:
         bank_account: str | None = None,
         products_data: list[dict[str, str | int]] | None = None,
     ) -> PurchaseResult:
+        """products_data items: {"product", "quantity", "price"}; add "serials": [...] for tracked units,
+        which sets the quantity to the number of serials."""
+        self.last_purchase_response = {}
         self.page.goto(f"{self.url}/add", wait_until="domcontentloaded")
 
         # 1. Select Branch first
@@ -126,8 +133,16 @@ class PurchasesPage:
                 except Exception:
                     self.page.get_by_role("option", name=prod_name, exact=False).first.click(timeout=4000)
 
-                qty = Decimal(str(item["quantity"]))
-                self.page.locator(f"input[name='items.{i}.quantity']").fill(str(item["quantity"]))
+                serials = [str(serial) for serial in item.get("serials") or []]
+                quantity_value = str(len(serials)) if serials else str(item["quantity"])
+                qty = Decimal(quantity_value)
+                quantity_input = self.page.locator(f"input[name='items.{i}.quantity']")
+                quantity_input.fill(quantity_value)
+                quantity_input.blur()
+                for j, serial in enumerate(serials):
+                    serial_input = self.page.locator(f"input[name='items.{i}.unit_attribute_values.{j}']")
+                    serial_input.wait_for(state="visible", timeout=5000)
+                    serial_input.fill(serial)
 
                 if "price" in item:
                     price = Decimal(str(item["price"]))
@@ -150,6 +165,34 @@ class PurchasesPage:
                 self.bank_account_select.click()
                 self.page.get_by_role("option", name=bank_account).click()
 
+        def record_create(response: Response) -> None:
+            path = urlparse(response.url).path.rstrip("/")
+            if response.request.method == "POST" and (path.endswith("/purchase") or path.endswith("/purchases")):
+                try:
+                    body = response.json()
+                except Exception:
+                    body = {}
+                self.last_purchase_response = {
+                    "status": response.status,
+                    "body": body,
+                    "payload": response.request.post_data_json,
+                }
+
+        self.page.on("response", record_create)
+        try:
+            return self._submit_purchase(reference_no, supplier, branch, total_amount, paid_amount, purchase_type)
+        finally:
+            self.page.remove_listener("response", record_create)
+
+    def _submit_purchase(
+        self,
+        reference_no: str,
+        supplier: str,
+        branch: str,
+        total_amount: Decimal,
+        paid_amount: str,
+        purchase_type: str,
+    ) -> PurchaseResult:
         # Click Create
         self.create_button.click()
 

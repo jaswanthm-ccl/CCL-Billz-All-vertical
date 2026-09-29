@@ -1,5 +1,9 @@
-from utils.constants import ADMIN_EMAIL, ADMIN_PASSWORD, DASHBOARD_URL
 from pages.auth.login_page import LoginPage
+from utils.tenants import active_tenant
+
+ADMIN_EMAIL = active_tenant().email
+ADMIN_PASSWORD = active_tenant().password
+DASHBOARD_URL = active_tenant().url("/dashboard")
 
 
 # ============================================================================

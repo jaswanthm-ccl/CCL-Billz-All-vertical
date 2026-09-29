@@ -5,8 +5,9 @@ from urllib.parse import urlencode, urlsplit
 
 from playwright.sync_api import Locator, Page, Response
 
+from pages.common.base_page import BasePage
+from utils.tenants import Tenant
 from utils.constants import (
-    ENQUIRY_STAGE_WORKFLOWS_URL,
     LIST_TIMEOUT,
     UI_TIMEOUT,
 )
@@ -16,7 +17,9 @@ DELETE_ICON_BUTTON = 'button[title="delete"]:has(i.bi-trash)'
 RESTORE_ICON_BUTTON = 'button[title="delete"]:has(i.bi-arrow-clockwise)'
 
 
-class EnquiryStageWorkflowsPage:
+class EnquiryStageWorkflowsPage(BasePage):
+    PATH = "/enquiry-stage-workflows"
+
     SCOPE_LABELS = {
         "global": "Global Default",
         "type": "Enquiry Type Override",
@@ -24,9 +27,8 @@ class EnquiryStageWorkflowsPage:
         "branch_type": "Branch + Type Override",
     }
 
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.url = ENQUIRY_STAGE_WORKFLOWS_URL
+    def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
+        super().__init__(page, tenant)
         self._api_list_url: str | None = None
 
     @staticmethod

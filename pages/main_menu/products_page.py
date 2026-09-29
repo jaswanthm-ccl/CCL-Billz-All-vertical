@@ -1,18 +1,30 @@
 from __future__ import annotations
 
 import re
-from playwright.sync_api import Page, Locator
-from utils.constants import PRODUCTS_URL
+from playwright.sync_api import Page, Locator, Response
+from pages.common.base_page import BasePage
+from pages.common.components import ReactSelect
 from pages.common.form_page import has_required_field_feedback, has_validation_feedback
+from utils.tenants import Tenant
 
 
-class ProductsPage:
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.products_url = PRODUCTS_URL
+class ProductsPage(BasePage):
+    PATH = "/products"
+
+    def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
+        super().__init__(page, tenant)
+
+    # Legacy alias: unmigrated callers still assign products_url directly.
+    @property
+    def products_url(self) -> str:
+        return self.url
+
+    @products_url.setter
+    def products_url(self, value: str) -> None:
+        self.url = value
 
     def navigate(self) -> None:
-        self.page.goto(self.products_url)
+        self.page.goto(self.url)
         self.page.wait_for_load_state("networkidle")
 
     # ── Dynamic @property Locators ──────────────────────────────────────────
@@ -86,23 +98,26 @@ class ProductsPage:
         self,
         modal: Locator,
         name: str,
-        brand_name: str,
+        brand_name: str | None,
         category_name: str,
-        hsn_code: str,
-        unit_type: str,
+        hsn_code: str | None,
+        unit_type: str | None,
         cost_price: str = "100",
         selling_price: str = "150",
         gst_percentage: str = "18%",
         low_stock: str = "5",
+        unit_attribute: str | None = None,
     ) -> None:
+        """Optional selects (brand, HSN, unit type, unit attribute) are skipped when None."""
         modal.locator('input[name="name"]').fill(name)
 
         for field, option in (
             ("category_id", category_name),
             ("brand_id", brand_name),
         ):
-            select_container = modal.locator(f"input[name='{field}']").locator("..")
-            self._select_option(select_container, option)
+            if option:
+                select_container = modal.locator(f"input[name='{field}']").locator("..")
+                self._select_option(select_container, option)
 
         modal.locator('input[name="cost_price"]').fill(cost_price)
         modal.locator('input[name="selling_price"]').fill(selling_price)
@@ -111,23 +126,52 @@ class ProductsPage:
             ("gst_percentage", gst_percentage),
             ("gst_code_id", hsn_code),
             ("unit_type_id", unit_type),
+            ("product_unit_attribute_id", unit_attribute),
         ):
-            select_container = modal.locator(f"input[name='{field}']").locator("..")
-            self._select_option(select_container, option)
+            if option:
+                select_container = modal.locator(f"input[name='{field}']").locator("..")
+                self._select_option(select_container, option)
 
         modal.locator('input[name="low_stock"]').fill(low_stock)
+
+    def _fill_variants(self, modal: Locator, attribute_keys: list[str], variants: list[dict]) -> None:
+        """Pick variant keys, then one row per variant: {"attributes": {key: value}, "name", "cost_price", "selling_price"}."""
+        for key in attribute_keys:
+            ReactSelect.by_label(self.page, "Attributes", modal).select(key)
+        modal.get_by_text("Product Name").first.click()
+
+        toggle = modal.get_by_role("button", name="Add Variants")
+        if toggle.count() > 0 and toggle.is_visible():
+            toggle.click()
+
+        for index, variant in enumerate(variants):
+            modal.get_by_role("button", name="+ Add").click()
+            row = modal.locator("tbody tr").nth(index)
+            for key_index, key in enumerate(attribute_keys):
+                value = str(variant["attributes"][key])
+                row.locator(".react-select__control").nth(key_index).click()
+                self.page.locator(".react-select__option").filter(
+                    has_text=re.compile(rf"^\s*{re.escape(value)}\s*$")
+                ).first.click()
+            for field in ("name", "cost_price", "selling_price"):
+                if variant.get(field) is not None:
+                    modal.locator(f"input[name='variants[{index}].{field}']").fill(str(variant[field]))
 
     def add_product(
         self,
         name: str,
-        brand_name: str,
+        brand_name: str | None,
         category_name: str,
-        hsn_code: str,
-        unit_type: str,
+        hsn_code: str | None,
+        unit_type: str | None,
         cost_price: str = "100",
         selling_price: str = "150",
         gst_percentage: str = "18%",
-    ) -> None:
+        unit_attribute: str | None = None,
+        attribute_keys: list[str] | None = None,
+        variants: list[dict] | None = None,
+    ) -> Response | None:
+        """Create a product; returns the create response when it was captured."""
         self.add_product_button.wait_for(state="visible", timeout=10000)
         self.add_product_button.click()
         modal = self.modal_dialog
@@ -139,17 +183,20 @@ class ProductsPage:
 
         self._fill_product_form(
             modal, name, brand_name, category_name, hsn_code, unit_type,
-            cost_price, selling_price, gst_percentage
+            cost_price, selling_price, gst_percentage, unit_attribute=unit_attribute,
         )
+        if attribute_keys:
+            self._fill_variants(modal, attribute_keys, variants or [])
 
-
+        response = None
         try:
             with self.page.expect_response(
                 lambda r: "product" in r.url.lower() and r.request.method == "POST",
                 timeout=20000
             ) as resp_info:
                 self.create_product_button.click()
-            assert resp_info.value.status in (200, 201), f"Product creation failed with HTTP {resp_info.value.status}"
+            response = resp_info.value
+            assert response.status in (200, 201), f"Product creation failed with HTTP {response.status}"
         except Exception:
             if self.create_product_button.is_visible():
                 self.create_product_button.click()
@@ -164,6 +211,16 @@ class ProductsPage:
             modal.wait_for(state="hidden", timeout=15000)
         except Exception:
             self._ensure_modal_closed()
+        return response
+
+    def ensure_deleted(self, name: str) -> bool:
+        """Soft-delete the product unless it is already deleted or absent."""
+        self.navigate()
+        if not self.search_product(name):
+            return True
+        if not self.is_product_active(name):
+            return True
+        return self.delete_product(name)
 
     def _ensure_modal_closed(self) -> None:
         if not self.modal_dialog.is_visible():
@@ -279,6 +336,8 @@ class ProductsPage:
             row.first.wait_for(state="visible", timeout=5000)
             return True
         except Exception:
+            
+            
             return False
 
     def view_product(

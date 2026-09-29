@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 from playwright.sync_api import Download, Page
-from utils.constants import PURCHASE_REQUESTS_URL
+from pages.common.base_page import BasePage
 from pages.common.form_page import has_required_field_feedback, has_validation_feedback
+from utils.tenants import Tenant
 
-class PurchaseRequestPage:
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.url = PURCHASE_REQUESTS_URL
+class PurchaseRequestPage(BasePage):
+    PATH = "/purchase-requests"
+
+    def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
+        super().__init__(page, tenant)
 
     def navigate(self) -> None:
         self.page.goto(self.url)

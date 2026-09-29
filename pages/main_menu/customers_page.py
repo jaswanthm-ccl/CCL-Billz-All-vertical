@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import re
 from playwright.sync_api import Page, Locator
-from utils.constants import CUSTOMERS_URL
+from pages.common.base_page import BasePage
 from pages.common.form_page import has_required_field_feedback, has_validation_feedback
+from pages.master_menu.cities_page import CitiesPage
+from utils.tenants import Tenant
 
 
-class CustomersPage:
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.url = CUSTOMERS_URL
+class CustomersPage(BasePage):
+    PATH = "/customers"
+
+    def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
+        super().__init__(page, tenant)
 
     def navigate(self) -> None:
         self.page.goto(self.url)
@@ -187,11 +190,10 @@ class CustomersPage:
         default_address: bool = True,
         gst_number: str | None = None,
     ) -> str:
-        from pages.master_menu.cities_page import CitiesPage
         from utils.random_data import generate_random_code, generate_random_email, generate_random_phone, generate_random_postal_code
 
         if not city_name:
-            cities_page = CitiesPage(self.page)
+            cities_page = self.open(CitiesPage)
             cities_page.navigate()
             city_name = f"AutoCity_{generate_random_code('C')}"
             cities_page.add_city(city_name)

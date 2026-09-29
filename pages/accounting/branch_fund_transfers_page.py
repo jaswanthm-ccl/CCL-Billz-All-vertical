@@ -2,15 +2,17 @@ import re
 
 from playwright.sync_api import Locator, Page, expect
 
-from utils.constants import BRANCH_FUND_TRANSFERS_URL
+from pages.common.base_page import BasePage
+from utils.tenants import Tenant
 
 
-class BranchFundTransfersPage:
+class BranchFundTransfersPage(BasePage):
     """Page object for branch-to-branch cash and bank transfers."""
 
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.url = BRANCH_FUND_TRANSFERS_URL
+    PATH = "/branch-fund-transfers"
+
+    def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
+        super().__init__(page, tenant)
 
     def navigate(self) -> None:
         self.page.goto(self.url)

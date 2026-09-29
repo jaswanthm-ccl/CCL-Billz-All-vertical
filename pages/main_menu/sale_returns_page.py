@@ -1,13 +1,26 @@
 from __future__ import annotations
 
 import re
-from playwright.sync_api import Page
-from utils.constants import SALE_RETURNS_URL
+from urllib.parse import urlparse
+from playwright.sync_api import Page, Response
+from pages.common.base_page import BasePage
+from utils.constants import LIST_TIMEOUT
+from utils.tenants import Tenant
 
-class SaleReturnsPage:
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.url = SALE_RETURNS_URL
+class SaleReturnsPage(BasePage):
+    PATH = "/sale-returns"
+
+    def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
+        super().__init__(page, tenant)
+
+    def submit_return(self) -> Response:
+        """Submit the open sale-return form as shown (tracked serials come preselected) and return the API response."""
+        with self.page.expect_response(
+            lambda r: r.request.method == "POST" and urlparse(r.url).path.rstrip("/").endswith("/sales-return"),
+            timeout=LIST_TIMEOUT,
+        ) as response_info:
+            self.page.get_by_role("button", name="Return").click()
+        return response_info.value
 
     def navigate(self) -> None:
         self.page.goto(self.url)
@@ -23,9 +36,10 @@ class SaleReturnsPage:
         qty_input = self.page.get_by_placeholder("Quantity").first
         qty_input.click()
         qty_input.fill(str(quantity))
-        
-        self.page.get_by_role("button", name="Return").click()
-        
+
+        response = self.submit_return()
+        assert response.ok, f"Sale return rejected ({response.status}): {response.text()[:500]}"
+
         # Wait for toast
         try:
             toast = self.page.locator(".Toastify__toast-body, .toast-body, [role='alert'], .ant-message").filter(

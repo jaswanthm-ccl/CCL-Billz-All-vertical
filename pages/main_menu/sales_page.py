@@ -2,14 +2,42 @@ from __future__ import annotations
 
 import re
 from decimal import Decimal
-from playwright.sync_api import Page
-from utils.constants import SALES_URL
+from urllib.parse import urlparse
+from playwright.sync_api import Page, Response
+from pages.common.base_page import BasePage
 from utils.models import SaleResult
+from utils.tenants import Tenant
 
-class SalesPage:
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.url = SALES_URL
+class SalesPage(BasePage):
+    PATH = "/sales"
+
+    def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
+        super().__init__(page, tenant)
+        self.last_sale_response: dict = {}
+
+    def _record_sale_create(self, response: Response) -> None:
+        path = urlparse(response.url).path.rstrip("/")
+        if response.request.method == "POST" and (path.endswith("/sales") or path.endswith("/sale")):
+            try:
+                body = response.json()
+            except Exception:
+                body = {}
+            self.last_sale_response = {
+                "status": response.status,
+                "body": body,
+                "payload": response.request.post_data_json,
+            }
+
+    def scan_serials(self, row_idx: int, serials: list[str]) -> None:
+        """Enter tracked unit values (serials) through the line's scanner box; quantity follows the count."""
+        scanner = self.page.locator(f"table tbody tr:nth-child({row_idx})").get_by_placeholder(
+            re.compile(r"^Scan .* here", re.I)
+        ).first
+        scanner.wait_for(state="visible", timeout=10000)
+        for serial in serials:
+            scanner.fill(str(serial))
+            scanner.press("Enter")
+            self.page.wait_for_timeout(400)
 
     def navigate(self) -> None:
         self.page.goto(self.url)
@@ -114,8 +142,11 @@ class SalesPage:
         self, customer_name: str, branch_name: str, paid_amount: str, price: str,
         product_name: str | None = None, quantity: int | None = None, address_text: str | None = None, payment_method: str = "Cash",
         salesperson_name: str | None = None, sale_date: str | None = None,
-        is_emi: bool = False, emi_provider_name: str | None = None, emi_financed_amount: str | None = None
+        is_emi: bool = False, emi_provider_name: str | None = None, emi_financed_amount: str | None = None,
+        serials: list[str] | None = None,
     ) -> SaleResult:
+        """serials: tracked unit values to sell on the first line; replaces quantity."""
+        self.last_sale_response = {}
         self.page.goto(f"{self.url}/add")
         try:
             self.page.wait_for_load_state("domcontentloaded")
@@ -144,7 +175,10 @@ class SalesPage:
 
         if product_name:
             self._select_product_in_row(1, product_name)
-        if quantity is not None:
+        if serials:
+            self.scan_serials(1, serials)
+            quantity = len(serials)
+        elif quantity is not None:
             qty_input = self.page.locator("tr:nth-child(1)").get_by_placeholder("Quantity")
             try:
                 qty_input.wait_for(state="visible", timeout=5000)
@@ -181,35 +215,47 @@ class SalesPage:
                     self.page.get_by_role("option", name=emi_provider_name, exact=False).first.click(timeout=4000)
 
             if emi_financed_amount:
-                self.page.locator('input[name="emi_financed_amount"]').fill(str(emi_financed_amount))
+                financed_input = self.page.locator('input[name="emi_financed_amount"]')
+                if financed_input.is_editable():
+                    financed_input.fill(str(emi_financed_amount))
+                else:
+                    # Read-only when the app derives it as total minus paid amount.
+                    shown = financed_input.input_value()
+                    assert Decimal(shown or "0") == Decimal(str(emi_financed_amount)), (
+                        f"EMI financed amount shows {shown}, expected {emi_financed_amount}"
+                    )
 
-        self.page.get_by_role("button", name="Create").click()
+        self.page.on("response", self._record_sale_create)
         try:
-            confirm_btn = self.page.locator("div.modal-footer button, div[role='dialog'] button, .modal-dialog button").filter(has_text=re.compile(r"^(?:Create|Yes|Confirm)$", re.IGNORECASE))
-            if confirm_btn.count() > 0 and confirm_btn.first.is_visible():
-                confirm_btn.first.click()
-        except Exception:
-            pass
-
-        # Check for error toasts / alerts first to fail fast
-        err_alert = self.page.locator(".Toastify__toast--error, .alert-danger, .invalid-feedback").first
-        if err_alert.count() > 0 and err_alert.is_visible():
-            raise RuntimeError(f"Sale creation failed with error: {err_alert.inner_text()}")
-
-        # Wait for toast or redirect
-        toast_found = False
-        try:
-            toast = self.page.locator(".Toastify__toast-body, .toast-body, [role='alert'], .ant-message").filter(
-                has_text=re.compile(r"Sale.*(?:created|added|success)", re.IGNORECASE)
-            ).first
-            toast.wait_for(state="visible", timeout=10000)
-            toast_found = True
-        except Exception:
+            self.page.get_by_role("button", name="Create").click()
             try:
-                self.page.get_by_text(re.compile(r"Sale (?:created|added)", re.IGNORECASE)).first.wait_for(state="visible", timeout=5000)
-                toast_found = True
+                confirm_btn = self.page.locator("div.modal-footer button, div[role='dialog'] button, .modal-dialog button").filter(has_text=re.compile(r"^(?:Create|Yes|Confirm)$", re.IGNORECASE))
+                if confirm_btn.count() > 0 and confirm_btn.first.is_visible():
+                    confirm_btn.first.click()
             except Exception:
                 pass
+
+            # Check for error toasts / alerts first to fail fast
+            err_alert = self.page.locator(".Toastify__toast--error, .alert-danger, .invalid-feedback").first
+            if err_alert.count() > 0 and err_alert.is_visible():
+                raise RuntimeError(f"Sale creation failed with error: {err_alert.inner_text()}")
+
+            # Wait for toast or redirect
+            toast_found = False
+            try:
+                toast = self.page.locator(".Toastify__toast-body, .toast-body, [role='alert'], .ant-message").filter(
+                    has_text=re.compile(r"Sale.*(?:created|added|success)", re.IGNORECASE)
+                ).first
+                toast.wait_for(state="visible", timeout=10000)
+                toast_found = True
+            except Exception:
+                try:
+                    self.page.get_by_text(re.compile(r"Sale (?:created|added)", re.IGNORECASE)).first.wait_for(state="visible", timeout=5000)
+                    toast_found = True
+                except Exception:
+                    pass
+        finally:
+            self.page.remove_listener("response", self._record_sale_create)
         
         # Navigate to Sales List to retrieve invoice number
         try:

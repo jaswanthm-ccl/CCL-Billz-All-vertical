@@ -8,7 +8,7 @@ from utils.constants import (
     SETTLED_TIMEOUT,
     UI_TIMEOUT,
 )
-from utils.tenants import RETAIL, Tenant
+from utils.tenants import Tenant
 from pages.common.base_page import BasePage
 from pages.common.form_page import has_validation_feedback
 
@@ -19,7 +19,7 @@ RETRIEVE_ICON_BUTTON = 'button[title="delete"]:has(i.bi-arrow-clockwise)'
 class ProductAttributesPage(BasePage):
     PATH = "/product-unit-attributes"
 
-    def __init__(self, page: Page, tenant: Tenant = RETAIL) -> None:
+    def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
         super().__init__(page, tenant)
         self._list_api_url: str | None = None
         self._list_headers: dict | None = None

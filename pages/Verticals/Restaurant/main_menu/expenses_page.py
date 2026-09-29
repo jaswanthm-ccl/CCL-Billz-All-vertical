@@ -14,13 +14,15 @@ from __future__ import annotations
 
 import re
 from playwright.sync_api import Page, Locator
-from utils.res_constants import RES_EXPENSES_URL
+from pages.common.base_page import BasePage
+from utils.tenants import RESTAURANT, Tenant
 
 
-class ExpensesPage:
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.url = RES_EXPENSES_URL
+class ExpensesPage(BasePage):
+    PATH = "/expenses"
+
+    def __init__(self, page: Page, tenant: Tenant = RESTAURANT) -> None:
+        super().__init__(page, tenant)
 
     def navigate(self) -> None:
         self.page.goto(self.url)

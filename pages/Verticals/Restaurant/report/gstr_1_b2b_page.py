@@ -12,16 +12,14 @@ from urllib.parse import urlparse
 from playwright.sync_api import Page, Response
 
 from pages.report.gstr_1_b2b_page import Gstr1B2bPage as SharedGstr1B2bPage
-from utils.res_constants import RES_GSTR1_B2B_URL
+from utils.tenants import RESTAURANT, Tenant
 
 
 class Gstr1B2bPage(SharedGstr1B2bPage):
     """Restaurant adapter for the GSTR-1 B2B report page."""
 
-    def __init__(self, page: Page) -> None:
-        super().__init__(page)
-        self.url = RES_GSTR1_B2B_URL
-        self.REPORT_URL = RES_GSTR1_B2B_URL
+    def __init__(self, page: Page, tenant: Tenant = RESTAURANT) -> None:
+        super().__init__(page, tenant)
 
     def _capture(
         self,

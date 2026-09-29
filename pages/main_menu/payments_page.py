@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from playwright.sync_api import Locator, Page
 
-from utils.constants import BASE_URL, LIST_TIMEOUT, UI_TIMEOUT
+from pages.common.base_page import BasePage
+from utils.constants import LIST_TIMEOUT, UI_TIMEOUT
+from utils.tenants import Tenant
 
-PAYMENTS_URL = f"{BASE_URL}/payments"
 
-
-class PaymentsPage:
+class PaymentsPage(BasePage):
     """Page object for the Payments module (/payments).
 
     Payments is a READ-ONLY list. Payments are auto-generated when Sales
@@ -19,9 +19,10 @@ class PaymentsPage:
     View: clicking REFERENCE opens a modal with Sale/Purchase details.
     """
 
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.url = PAYMENTS_URL
+    PATH = "/payments"
+
+    def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
+        super().__init__(page, tenant)
 
     def navigate(self) -> None:
         self.page.goto(self.url)

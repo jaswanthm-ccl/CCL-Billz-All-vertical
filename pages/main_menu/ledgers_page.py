@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from playwright.sync_api import Page
 
-from utils.constants import BASE_URL
+from pages.common.base_page import BasePage
+from utils.tenants import Tenant
 
-LEDGERS_URL = f"{BASE_URL}/ledgers"
 
-
-class LedgersPage:
+class LedgersPage(BasePage):
     """Page object for the Ledgers module (/ledgers).
 
     Ledgers are auto-created when Customers, Suppliers, Bank Accounts are added.
@@ -19,9 +18,10 @@ class LedgersPage:
     Edit: opening_balance, opening_balance_type (Dr/Cr), account_group_id
     """
 
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.url = LEDGERS_URL
+    PATH = "/ledgers"
+
+    def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
+        super().__init__(page, tenant)
 
     def navigate(self) -> None:
         self.page.goto(self.url)

@@ -6,14 +6,16 @@ from __future__ import annotations
 
 import re
 from playwright.sync_api import Page, Locator
-from utils.res_constants import RES_CUSTOMERS_URL
+from pages.common.base_page import BasePage
+from utils.tenants import RESTAURANT, Tenant
 from utils.random_data import generate_random_phone
 
 
-class CustomersPage:
-    def __init__(self, page: Page) -> None:
-        self.page = page
-        self.url = RES_CUSTOMERS_URL
+class CustomersPage(BasePage):
+    PATH = "/customers"
+
+    def __init__(self, page: Page, tenant: Tenant = RESTAURANT) -> None:
+        super().__init__(page, tenant)
 
     def navigate(self) -> None:
         self.page.goto(self.url)
