@@ -1,0 +1,63 @@
+name: Playwright E2E Tests
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      test_suite:
+        description: 'Test suite to run (e.g., tests/master_menu, tests/main_menu, tests/)'
+        required: true
+        default: 'tests/master_menu/'
+
+jobs:
+  test:
+    name: Run Automated E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install Playwright Browsers & OS Dependencies
+        run: |
+          playwright install --with-deps chromium
+
+      - name: Run Playwright Tests (Parallel)
+        env:
+          BASE_URL: ${{ secrets.BASE_URL || 'https://dev-demo-ccl.devccl-billzweb.crystalbillz.com' }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          PLAYBACK_UI: '0'
+        run: |
+          mkdir -p reports
+          pytest ${{ github.event.inputs.test_suite || 'tests/master_menu/' }} \
+            -n 2 \
+            --dist loadfile \
+            --html=reports/report.html \
+            --self-contained-html \
+            --junitxml=reports/results.xml
+
+      - name: Upload Test Report & Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-test-results
+          path: |
+            reports/
+            evidence/
+          retention-days: 14

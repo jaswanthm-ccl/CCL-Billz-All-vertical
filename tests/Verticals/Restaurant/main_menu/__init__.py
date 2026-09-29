@@ -1,0 +1,1 @@
+"""Restaurant Main Menu Tests."""
