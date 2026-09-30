@@ -67,7 +67,7 @@ def test_account_groups_crud_lifecycle(logged_in_page, account_group_cleanup):
     account_group_cleanup.remove(parent_name)
 
 
-@pytest.mark.xfail(reason="Restore functionality is not working in the app")
+@pytest.mark.xfail(reason="BUG_012: restore button stays disabled on a deactivated account group")
 def test_retrieve_account_group(logged_in_page, account_group_cleanup):
     page_obj = AccountGroupsPage(logged_in_page)
     page_obj.navigate()

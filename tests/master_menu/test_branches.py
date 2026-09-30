@@ -202,7 +202,7 @@ def test_validate_branch_phone(logged_in_page, phone):
     )
 
 
-@pytest.mark.xfail(reason="Known bug: phone numbers starting outside 6-9 are accepted")
+@pytest.mark.xfail(reason="Known bug: phone numbers starting outside 6-9 are accepted (validation shows only intermittently)")
 def test_reject_branch_phone_with_invalid_start_digit(logged_in_page):
     branches_page = BranchesPage(logged_in_page)
     branches_page.navigate()

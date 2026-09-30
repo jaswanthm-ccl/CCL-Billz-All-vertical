@@ -36,6 +36,7 @@ SERIAL_MODULES = {
         "regression/test_emi_sale_and_reconciliation.py",
         "regression/test_master_commerce_lifecycle_flow.py",
         "regression/test_financial_reports_and_gstr_flow.py",
+        "Verticals/Galaxy/regression/test_mobile_cash_sale_flow.py",
         "Verticals/Restaurant/accounting/test_profit_loss.py",
         "Verticals/Restaurant/accounting/test_balance_sheet.py",
         "Verticals/Restaurant/accounting/test_trial_balance.py",

@@ -223,6 +223,7 @@ def test_enquiry_required_field_validation(logged_in_page):
     assert not missing, f"Missing Enquiry validation messages: {sorted(missing)}"
 
 
+@pytest.mark.xfail(reason="BUG_015: a new enquiry no longer gets its automatic pending follow-up")
 def test_default_stage_and_initial_followup(
     logged_in_page, module_enquiry_type, module_branch
 ):

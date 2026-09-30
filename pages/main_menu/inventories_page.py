@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 from decimal import Decimal
 from playwright.sync_api import Page, Locator
 from pages.common.base_page import BasePage
@@ -101,16 +102,43 @@ class InventoriesPage(BasePage):
         match = re.match(r"(\d+(?:\.\d+)?)", stock_str)
         return Decimal(match.group(1)) if match else Decimal("0")
 
-    def get_available_units(self, product_name: str, attribute_name: str) -> list[str]:
-        """Tracked unit values (e.g. serial numbers) listed in the AVAILABLE UNITS column for the product."""
-        if not self.search_inventory(product_name):
+    def get_available_units(
+        self, product_name: str, attribute_name: str, branch: str | None = None, search: str | None = None
+    ) -> list[str]:
+        """Tracked unit values (e.g. serial numbers) listed in the AVAILABLE UNITS column for the product,
+        optionally in one branch's row (a product has one row per branch that holds it).
+        For a variant ("Phone 8GB") pass the base product name as `search`: the search box doesn't match variant names."""
+        if not self.search_inventory(search or product_name):
             return []
         headers = [h.strip().upper() for h in self.page.locator("thead th").all_inner_texts()]
         if "AVAILABLE UNITS" not in headers:
             return []
-        row = self.page.locator("table tbody tr").filter(has_text=product_name).first
+        rows = self.page.locator("table tbody tr").filter(has_text=product_name)
+        if branch:
+            rows = rows.filter(has_text=branch)
+            if rows.count() == 0:
+                return []
+        row = rows.first
         cell_text = row.locator("td").nth(headers.index("AVAILABLE UNITS")).inner_text()
         return re.findall(rf"{re.escape(attribute_name)}:\s*(\S+)", cell_text)
+
+    def wait_for_available_units(
+        self,
+        product_name: str,
+        attribute_name: str,
+        expected: list[str],
+        branch: str | None = None,
+        search: str | None = None,
+        timeout_s: float = 20,
+    ) -> list[str]:
+        """Re-read AVAILABLE UNITS until it equals `expected` (stock updates land a moment after the
+        transaction under load). Returns the last value read so the caller can assert on it."""
+        deadline = time.monotonic() + timeout_s
+        while True:
+            self.navigate()
+            units = self.get_available_units(product_name, attribute_name, branch=branch, search=search)
+            if sorted(units) == sorted(expected) or time.monotonic() > deadline:
+                return units
 
     def get_total_stock_number(self, product_name: str) -> Decimal:
         values = self.get_stock_values(product_name)

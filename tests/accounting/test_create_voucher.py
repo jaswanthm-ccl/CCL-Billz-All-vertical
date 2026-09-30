@@ -12,6 +12,9 @@ import pytest
 
 from pages.accounting.create_voucher_page import CreateVoucherPage
 
+# The journal dropdown excludes cash and bank ledgers and has one "Sales Ledger" per branch; this system ledger is unique.
+DISCOUNT_LEDGER = "Sales Discount A/c"
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 1. CONTRA VOUCHER
@@ -46,8 +49,10 @@ class TestContraVoucher:
             branch=voucher_funded_state["branch"],
         )
 
+        response = page.last_voucher_response
         assert page.wait_for_redirect_to_history(), (
-            "Contra voucher (bank_to_cash) did not redirect to history"
+            f"Contra voucher (bank_to_cash) was not created: "
+            f"{response.text()[:300] if response else 'no save request sent'}"
         )
 
     def test_contra_bank_to_bank_preset(self, logged_in_page, voucher_funded_state):
@@ -55,21 +60,27 @@ class TestContraVoucher:
         page = CreateVoucherPage(logged_in_page)
         page.navigate_contra()
 
-        # bank_to_bank requires at least 2 bank accounts
+        source_bank = voucher_funded_state["bank"]
         page._preset_select.select_option("bank_to_bank")
-        page.page.wait_for_timeout(500)
+        page._select_native_option(page._credit_ledger_select, source_bank, voucher_funded_state["branch"])
 
-        # Check if debit ledger has options (needs 2+ banks)
-        options_count = page._debit_ledger_select.locator("option").count()
-        if options_count <= 1:
+        other_bank = page._debit_ledger_select.evaluate(
+            """(select, source) => Array.from(select.options)
+                .map(o => o.text.trim())
+                .find(text => text && !text.includes(source) && !/^select/i.test(text))""",
+            source_bank,
+        )
+        if not other_bank:
             pytest.skip("Only one bank account exists — cannot test bank_to_bank preset")
+        page._select_native_option(page._debit_ledger_select, other_bank)
 
         page._amount_input.fill("25")
         page._remarks_textarea.fill("Bank to bank transfer test")
-        page._contra_submit_button.click()
+        response = page._submit_and_confirm(page._contra_submit_button)
 
         assert page.wait_for_redirect_to_history(), (
-            "Contra voucher (bank_to_bank) did not redirect to history"
+            f"Contra voucher (bank_to_bank) was not created: "
+            f"{response.text()[:300] if response else 'no save request sent'}"
         )
 
     def test_contra_custom_transfer(self, logged_in_page, voucher_funded_state):
@@ -169,11 +180,10 @@ class TestJournalVoucher:
         """Create a balanced journal voucher (total DR == total CR)."""
         page = CreateVoucherPage(logged_in_page)
 
-        customer_name = voucher_funded_state.get("customer", "")
         page.create_journal_voucher(
             entries=[
-                {"ledger": "Sales Account", "type": "debit", "amount": "100"},
-                {"ledger": customer_name or "Discount", "type": "credit", "amount": "100"},
+                {"ledger": DISCOUNT_LEDGER, "type": "debit", "amount": "100"},
+                {"ledger": voucher_funded_state["customer"], "type": "credit", "amount": "100"},
             ],
             remarks="Balanced journal entry test",
         )
@@ -193,13 +203,8 @@ class TestJournalVoucher:
         page.select_voucher_type("Journal")
         page.page.wait_for_timeout(500)
 
-        customer_name = voucher_funded_state.get("customer", "")
-
-        # Fill first line: DR 200
-        page._fill_journal_line(0, "Sales Account", "debit", "200")
-
-        # Fill the second default line: CR 100 (unbalanced - 200 != 100)
-        page._fill_journal_line(1, customer_name or "Discount", "credit", "100")
+        page._fill_journal_line(0, DISCOUNT_LEDGER, "debit", "200")
+        page._fill_journal_line(1, voucher_funded_state["customer"], "credit", "100")
 
         assert page.is_unbalanced_error_visible()
         assert not page.is_submit_enabled(), "Unbalanced journal must disable submit"
@@ -240,10 +245,8 @@ class TestJournalVoucher:
         page.select_voucher_type("Journal")
         page.page.wait_for_timeout(500)
 
-        bank_name = voucher_funded_state["bank"]
-        page._fill_journal_line(0, "Cash Ledger", "debit", "0")
-
-        page._fill_journal_line(1, bank_name, "credit", "0")
+        page._fill_journal_line(0, DISCOUNT_LEDGER, "debit", "0")
+        page._fill_journal_line(1, voucher_funded_state["customer"], "credit", "0")
 
         assert not page.is_submit_enabled(), "Zero-value journal must disable submit"
 
@@ -525,6 +528,7 @@ class TestChitEntryVoucher:
 class TestMDRSettlementVoucher:
     """MDR Settlement Voucher: reconciles POS card payments against bank charges."""
 
+    @pytest.mark.xfail(reason="BUG_013: MDR ignores a bank sale's sale date and counts it by the day it was saved")
     def test_mdr_settlement_creation(self, logged_in_page, voucher_funded_state):
         """Create a valid MDR settlement voucher."""
         page = CreateVoucherPage(logged_in_page)

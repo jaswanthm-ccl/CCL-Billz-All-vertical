@@ -6,9 +6,11 @@ import contextlib
 
 import pytest
 
+from pages.main_menu.products_page import ProductsPage
 from pages.main_menu.purchases_page import PurchasesPage
 from tests.Verticals.Galaxy.data_fixtures import GALAXY_BRANCH, new_serials
-from utils.random_data import generate_random_code
+from utils.galaxy_constants import GALAXY_TRACKED_ATTRIBUTE
+from utils.random_data import generate_random_code, generate_random_name
 
 
 @pytest.fixture
@@ -50,7 +52,48 @@ def test_reject_purchase_of_serial_already_in_stock(purchases_page, galaxy_suppl
     with contextlib.suppress(RuntimeError):
         _buy(purchases_page, galaxy_supplier, galaxy_serial_product, serial)
 
+    _assert_rejected_as_duplicate(purchases_page.last_purchase_response)
+
+
+def test_reject_same_serial_twice_in_one_purchase(purchases_page, galaxy_supplier, galaxy_serial_product):
+    serial = new_serials(1)[0]
+    reference = generate_random_code("GLX")
+    with contextlib.suppress(RuntimeError):
+        purchases_page.add_purchase(
+            galaxy_supplier, GALAXY_BRANCH, reference, "0", "Cash",
+            products_data=[{"product": galaxy_serial_product, "price": "12000", "serials": [serial, serial]}],
+        )
+
     record = purchases_page.last_purchase_response
+    if record:
+        _assert_rejected_as_duplicate(record)
+    purchases_page.navigate()
+    assert not purchases_page.search_purchase(reference), f"Purchase {reference} with a repeated serial was created"
+
+
+def test_reject_serial_already_used_by_another_product(
+    purchases_page, galaxy_logged_in_page, tenant, galaxy_supplier, galaxy_serial_product, galaxy_category, cleanup
+):
+    serial = new_serials(1)
+    _buy(purchases_page, galaxy_supplier, galaxy_serial_product, serial)
+    assert purchases_page.last_purchase_response.get("status") in (200, 201)
+
+    products_page = ProductsPage(galaxy_logged_in_page, tenant)
+    products_page.navigate()
+    other_product = generate_random_name("galaxy_phone")
+    response = products_page.add_product(
+        other_product, None, galaxy_category, None, None, "12000", "15000", unit_attribute=GALAXY_TRACKED_ATTRIBUTE,
+    )
+    assert response is not None and response.ok, "Second serial-tracked product setup failed"
+    cleanup(f"product {other_product}", lambda: products_page.ensure_deleted(other_product))
+
+    with contextlib.suppress(RuntimeError):
+        _buy(purchases_page, galaxy_supplier, other_product, serial)
+
+    _assert_rejected_as_duplicate(purchases_page.last_purchase_response)
+
+
+def _assert_rejected_as_duplicate(record):
     assert record.get("status") == 422, f"Duplicate serial purchase was not rejected: {record}"
     messages = [m for msgs in record["body"].get("errors", {}).values() for m in msgs]
-    assert any("must be unique" in m for m in messages), messages
+    assert any("unique" in m.lower() or "duplicate" in m.lower() for m in messages), messages

@@ -8,6 +8,7 @@ from tests.Verticals.Galaxy.data_fixtures import (  # noqa: F401  (re-exported a
     galaxy_city,
     galaxy_customer,
     galaxy_emi_provider,
+    galaxy_second_branch,
     galaxy_serial_product,
     galaxy_stock,
     galaxy_supplier,

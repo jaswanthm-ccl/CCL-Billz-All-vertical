@@ -11,6 +11,7 @@ Provides module-scoped dependencies:
 """
 import pytest
 import random
+import time
 from datetime import date, timedelta
 
 from pages.master_menu.branches_page import BranchesPage
@@ -27,6 +28,7 @@ from pages.main_menu.sales_page import SalesPage
 from pages.main_menu.purchases_page import PurchasesPage
 from pages.main_menu.chits_page import ChitsPage
 from pages.accounting.create_voucher_page import CreateVoucherPage
+from pages.accounting.ledger_statement_page import LedgerStatementPage
 from utils.random_data import (
     generate_random_name,
     generate_random_email,
@@ -284,6 +286,19 @@ def voucher_funded_state(module_page, module_branch, module_bank_account, module
         payment_method=module_bank_account,
         sale_date=(date.today() - timedelta(days=1)).isoformat(),
     )
+    assert sales_page.last_sale_response.get("status") in (200, 201), (
+        f"Bank-funding sale failed, so the bank has no balance: {sales_page.last_sale_response}"
+    )
+    # Under load the ledger posting lands a moment after the sale; contra tests spend from this bank.
+    ledger_page = LedgerStatementPage(module_page)
+    deadline = time.monotonic() + 30
+    while True:
+        ledger_page.navigate()
+        ledger_page.filter_statement(module_bank_account, module_branch)
+        bank_balance = abs(LedgerStatementPage.parse_signed_balance(ledger_page.get_closing_balance()))
+        if bank_balance >= 500 or time.monotonic() > deadline:
+            break
+    assert bank_balance >= 500, f"Bank {module_bank_account} shows {bank_balance} after the ₹500 bank sale"
 
     # Sale via cash
     sales_page.add_sale(

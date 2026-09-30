@@ -11,6 +11,7 @@ from pages.main_menu.customers_page import CustomersPage
 from pages.main_menu.products_page import ProductsPage
 from pages.main_menu.purchases_page import PurchasesPage
 from pages.main_menu.suppliers_page import SuppliersPage
+from pages.master_menu.branches_page import BranchesPage
 from pages.master_menu.categories_page import CategoriesPage
 from pages.master_menu.cities_page import CitiesPage
 from pages.master_menu.emi_providers_page import EmiProvidersPage
@@ -87,6 +88,15 @@ def galaxy_stock(galaxy_logged_in_page, tenant, galaxy_supplier, galaxy_serial_p
     )
     assert purchases_page.last_purchase_response.get("status") in (200, 201), "Stock purchase setup failed"
     return galaxy_serial_product, serials, reference
+
+
+@pytest.fixture
+def galaxy_second_branch(galaxy_logged_in_page, tenant, galaxy_city, cleanup):
+    branches_page = BranchesPage(galaxy_logged_in_page, tenant)
+    branches_page.navigate()
+    name = branches_page.add_branch(city_name=galaxy_city, name=generate_random_name("galaxy_branch"))
+    cleanup(f"branch {name}", lambda: branches_page.ensure_deleted(name))
+    return name
 
 
 @pytest.fixture

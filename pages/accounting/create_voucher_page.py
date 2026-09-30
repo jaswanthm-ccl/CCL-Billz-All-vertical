@@ -550,18 +550,21 @@ class CreateVoucherPage(BasePage):
             if date_input.count() > 0 and date_input.is_visible():
                 date_input.fill(settlement_date)
 
-        bank_select = self._form().locator("select").first
-        try:
-            with self.page.expect_response(
-                lambda r: "/accounting/mdr-settlement/preview" in r.url, timeout=10000
-            ):
-                self._select_native_option(bank_select, bank_name)
-        except PlaywrightTimeoutError:
-            pass  # The preview only loads when the bank has unsettled card sales.
+        self._select_native_option(self._form().locator("select").first, bank_name)
 
-        num_input = self._form().locator("input[type='number']").first
-        if num_input.count() > 0 and num_input.is_visible():
-            num_input.fill(str(mdr_amount))
+        # The preview fills "Gross card sales" (shown as "—" until loaded) and resets the MDR charge.
+        gross = self._form().locator("input[type='text'][disabled]").first
+        try:
+            expect(gross).not_to_have_value(re.compile(r"^(—|-|0(\.0+)?)?$"), timeout=10000)
+        except AssertionError:
+            raise AssertionError(
+                f"No unsettled card sales for bank '{bank_name}' on the settlement date "
+                f"(Gross card sales = '{gross.input_value()}')"
+            ) from None
+
+        mdr_input = self._form().locator("input[type='number']").first
+        mdr_input.fill(str(mdr_amount))
+        expect(mdr_input).to_have_value(str(mdr_amount))
 
     def create_mdr_settlement_voucher(
         self,

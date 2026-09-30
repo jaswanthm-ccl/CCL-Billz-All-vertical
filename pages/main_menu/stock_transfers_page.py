@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import re
 from decimal import Decimal
-from playwright.sync_api import Page
+from urllib.parse import urlparse
+
+from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError, expect
 
 from pages.common.base_page import BasePage
 from utils.models import StockTransferResult
@@ -34,6 +36,24 @@ class StockTransfersPage(BasePage):
 
     # ─── Create ────────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _is_create_response(response) -> bool:
+        return response.request.method == "POST" and urlparse(response.url).path.rstrip("/").endswith(
+            ("/stock-transfers", "/stock-transfer")
+        )
+
+    def _pick_option(self, input_name: str, text: str) -> None:
+        # The retail form silently refuses to submit when these picks run back-to-back without
+        # the short settle delays below (cause not yet identified); keep them until it is.
+        self.page.locator(f"input[name='{input_name}']").locator("xpath=..").locator(
+            ".react-select__control, .react-select__input-container"
+        ).first.click()
+        self.page.wait_for_timeout(300)
+        self.page.keyboard.type(text, delay=20)
+        self.page.wait_for_timeout(500)
+        self.page.get_by_role("option", name=text, exact=False).first.click(timeout=5000)
+        self.page.wait_for_timeout(500)
+
     def add_stock_transfer(
         self,
         source_branch: str,
@@ -41,112 +61,79 @@ class StockTransfersPage(BasePage):
         products_data: list[dict[str, str | int]],
         remarks: str = "",
     ) -> StockTransferResult:
-        """Create a stock transfer and return a StockTransferResult."""
+        """products_data items: {"product", "quantity"}; for serial-tracked products give "serials": [...]
+        instead of a quantity (the form sets one unit per selected serial). Raises if the API rejects it."""
+        self.last_transfer_response: dict = {}
         self.page.goto(f"{self.url}/add")
-        self.page.wait_for_load_state("networkidle")
 
-        # Select Source Branch
-        source_ctrl = self.page.locator("input[name='source_branch_id']").locator("xpath=..").locator(".react-select__control, .react-select__input-container").first
-        source_ctrl.click()
-        self.page.wait_for_timeout(300)
-        self.page.keyboard.type(source_branch, delay=20)
-        self.page.wait_for_timeout(500)
-        try:
-            self.page.get_by_role("option", name=source_branch, exact=False).first.click(timeout=5000)
-        except Exception:
-            self.page.locator(".react-select__option").filter(has_text=source_branch).first.click()
-        self.page.wait_for_timeout(500)
-
-        # Select Destination Branch
-        dest_ctrl = self.page.locator("input[name='destination_branch_id']").locator("xpath=..").locator(".react-select__control, .react-select__input-container").first
-        dest_ctrl.click()
-        self.page.wait_for_timeout(300)
-        self.page.keyboard.type(destination_branch, delay=20)
-        self.page.wait_for_timeout(500)
-        try:
-            self.page.get_by_role("option", name=destination_branch, exact=False).first.click(timeout=5000)
-        except Exception:
-            self.page.locator(".react-select__option").filter(has_text=destination_branch).first.click()
-        self.page.wait_for_timeout(500)
-
-        # Fill Remarks
+        self._pick_option("source_branch_id", source_branch)
+        self._pick_option("destination_branch_id", destination_branch)
         if remarks:
             self.page.locator("textarea[name='remarks']").fill(remarks)
 
         total_qty = Decimal("0")
-        # Add product line items
         for i, item in enumerate(products_data):
             if i > 0:
                 self.page.get_by_role("button", name="Add line").click()
-                self.page.wait_for_timeout(300)
+            self._pick_option(f"items.{i}.product_selector", str(item["product"]))
 
-            # Select product
-            prod_ctrl = self.page.locator(f"input[name='items.{i}.product_selector']").locator("xpath=..").locator(".react-select__control, .react-select__input-container").first
-            prod_ctrl.click()
-            self.page.wait_for_timeout(300)
-            self.page.keyboard.type(str(item["product"]), delay=20)
-            self.page.wait_for_timeout(500)
-            try:
-                self.page.get_by_role("option", name=str(item["product"]), exact=False).first.click(timeout=5000)
-            except Exception:
-                self.page.locator(".react-select__option").filter(has_text=str(item["product"])).first.click()
-            self.page.wait_for_timeout(500)
+            serials = [str(serial) for serial in item.get("serials") or []]
+            if serials:
+                for serial in serials:
+                    self.page.get_by_text(re.compile(rf"^{re.escape(serial)}\b")).first.click()
+                expect(self.page.get_by_text(re.compile(rf"Quantity: {len(serials)}\b"))).to_be_visible()
+                total_qty += len(serials)
+            else:
+                quantity_input = self.page.locator(f"input[name='items.{i}.quantity']")
+                quantity_input.click()
+                quantity_input.fill(str(item["quantity"]))
+                total_qty += Decimal(str(item["quantity"]))
 
-            # Fill quantity
-            item_qty = Decimal(str(item["quantity"]))
-            total_qty += item_qty
-            qty_input = self.page.locator(f"input[name='items.{i}.quantity']")
-            qty_input.click()
-            qty_input.fill(str(item["quantity"]))
+            if item.get("remarks"):
+                self.page.locator(f"input[name='items.{i}.remarks']").fill(str(item["remarks"]))
 
-            # Fill item remarks if provided
-            if "remarks" in item and item["remarks"]:
-                try:
-                    self.page.locator(f"input[name='items.{i}.remarks']").fill(
-                        str(item["remarks"])
-                    )
-                except Exception:
-                    pass
-
-        # Submit
-        self.page.get_by_role("button", name="Create transfer").click()
-
-        # Check for error alert first
-        err_alert = self.page.locator(".Toastify__toast--error, .alert-danger, .invalid-feedback").first
-        if err_alert.count() > 0 and err_alert.is_visible():
-            raise RuntimeError(f"Stock transfer failed with error: {err_alert.inner_text()}")
-
-        transfer_no = ""
-        # Wait for success — either navigates to index/detail page or shows toast
+        sent: list[str] = []
+        record_request = lambda request: sent.append(f"{request.method} {urlparse(request.url).path}")  # noqa: E731
+        self.page.on("request", record_request)
+        create_button = self.page.get_by_role("button", name="Create transfer")
         try:
-            self.page.wait_for_url(
-                lambda url: "/stock-transfers" in url and "/add" not in url,
-                timeout=10000,
+            try:
+                with self.page.expect_response(self._is_create_response, timeout=8000) as response_info:
+                    create_button.click(timeout=10000)
+            except PlaywrightTimeoutError:
+                # The form sometimes ignores the first click without sending anything; nothing was saved, so retry once.
+                if any(not r.startswith("GET") for r in sent):
+                    raise
+                with self.page.expect_response(self._is_create_response, timeout=15000) as response_info:
+                    create_button.click(timeout=10000)
+        except PlaywrightTimeoutError as error:
+            errors = self.page.locator(".invalid-feedback, .text-danger, .alert-danger, [role='alert']").all_inner_texts()
+            fields = self.page.locator("form input[name]").evaluate_all(
+                "els => els.filter(e => e.type !== 'search').map(e => `${e.name}=${e.value}${e.matches(':invalid') ? ' (invalid)' : ''}`)"
             )
-            try:
-                title = self.page.locator("h1, h2, h3, h4").first.text_content()
-                transfer_no = title.strip() if title else ""
-            except Exception:
-                pass
-        except Exception:
-            try:
-                toast = self.page.get_by_text(
-                    re.compile(r"transfer.*created|created.*successfully|success", re.IGNORECASE)
-                )
-                toast.wait_for(state="visible", timeout=5000)
-            except Exception:
-                pass
+            raise RuntimeError(
+                f"Stock transfer was not submitted: {str(error).splitlines()[0]}; "
+                f"form errors: {[e for e in errors if e.strip()]}; fields: {fields}; "
+                f"requests sent: {[r for r in sent if not r.startswith('GET')]}"
+            ) from None
+        finally:
+            self.page.remove_listener("request", record_request)
+        response = response_info.value
+        try:
+            body = response.json()
+        except ValueError:
+            body = {}
+        self.last_transfer_response = {"status": response.status, "body": body, "payload": response.request.post_data_json}
+        if not response.ok:
+            raise RuntimeError(f"Stock transfer rejected ({response.status}): {body.get('message') or body}")
 
-
+        data = body.get("data") or {}
+        transfer_no = str(data.get("transfer_no") or data.get("reference_no") or data.get("number") or "")
         if not transfer_no:
-            # Check table for latest transfer from this source branch
             self.navigate()
-            try:
-                first_row = self.page.locator("table tbody tr").filter(has_text=source_branch).first
-                if first_row.is_visible():
-                    transfer_no = first_row.locator("td").first.inner_text().strip()
-            except Exception:
-                pass
+            first_row = self.page.locator("table tbody tr").filter(has_text=source_branch).first
+            first_row.wait_for(state="visible", timeout=10000)
+            transfer_no = first_row.locator("td").first.inner_text().strip()
 
         return StockTransferResult(
             transfer_no=transfer_no,

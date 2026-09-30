@@ -15,11 +15,16 @@ def module_mdr_settlement(module_page, voucher_funded_state):
     """Create a deterministic MDR settlement from yesterday's ₹500 bank sale."""
     narration = generate_random_name("mdr_report")
     voucher = CreateVoucherPage(module_page)
-    voucher.create_mdr_settlement_voucher(
-        bank_ledger=voucher_funded_state["bank"],
-        mdr_amount="2",
-        remarks=narration,
-    )
+    try:
+        voucher.create_mdr_settlement_voucher(
+            bank_ledger=voucher_funded_state["bank"],
+            mdr_amount="2",
+            remarks=narration,
+        )
+    except AssertionError as error:
+        if "No unsettled card sales" in str(error):
+            pytest.xfail(f"BUG_013: MDR counts a back-dated bank sale by the day it was saved ({error})")
+        raise
     assert voucher.wait_for_redirect_to_history() or voucher.wait_for_success_toast()
 
     yield {
