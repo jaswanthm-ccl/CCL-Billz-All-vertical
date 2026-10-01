@@ -209,14 +209,15 @@ def test_closing_matches_last_running_balance(logged_in_page, funded_bank_accoun
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-def test_cash_ledger_has_debit_entries(logged_in_page, funded_bank_account):
-    """Cash Ledger should have debit entries (cash received from sales)."""
+def test_branch_cash_ledger_statement_loads_for_that_branch(logged_in_page, funded_bank_account):
+    """A branch's own Cash Ledger loads scoped to that branch (the fixture only sells via bank, so it has no cash entries)."""
+    branch = funded_bank_account["branch_name"]
     page = LedgerStatementPage(logged_in_page)
     page.navigate()
-    page.select_ledger("Cash Ledger")
-    page.select_branch(funded_bank_account["branch_name"])
+    page.filter_statement(f"Cash Ledger — {branch}", branch)
 
-    assert page.has_debit_entries() or page.get_row_count() >= 0
+    assert page.last_statement.get("branch_name") == branch, page.last_statement
+    assert page.last_statement.get("ledger_type") == "cash", page.last_statement
 
 
 def test_bank_ledger_has_debit_entries(logged_in_page, funded_bank_account):

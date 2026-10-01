@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from decimal import Decimal, InvalidOperation
 from urllib.parse import urlparse
-from playwright.sync_api import Page, Locator, Response
+from playwright.sync_api import Page, Locator, Response, TimeoutError as PlaywrightTimeoutError
 from pages.common.base_page import BasePage
 from utils.models import PurchaseResult
 from utils.tenants import Tenant
@@ -19,6 +19,15 @@ class PurchasesPage(BasePage):
     def navigate(self) -> None:
         self.page.goto(self.url)
         self.page.wait_for_load_state("domcontentloaded")
+
+    @staticmethod
+    def _is_create_response(response: Response) -> bool:
+        path = urlparse(response.url).path.rstrip("/")
+        return response.request.method == "POST" and (path.endswith("/purchase") or path.endswith("/purchases"))
+
+    def _pick_option(self, text: str) -> None:
+        """Click the open react-select's option containing `text`; fails rather than picking another option."""
+        self.page.locator(".react-select__option").filter(has_text=text).first.click(timeout=10000)
 
     # ── Dynamic @property Locators ──────────────────────────────────────────
 
@@ -94,21 +103,13 @@ class PurchasesPage(BasePage):
         branch_input.wait_for(state="visible", timeout=15000)
         branch_input.click()
         self.page.keyboard.type(branch)
-        self.page.wait_for_timeout(300)
-        try:
-            self.page.locator(".react-select__option").filter(has_text=branch).first.click(timeout=4000)
-        except Exception:
-            self.page.get_by_role("option", name=branch, exact=False).first.click(timeout=4000)
+        self._pick_option(branch)
 
         # 2. Select Supplier second
         supp_wrap = self.page.locator("label:has-text('Supplier')").locator("xpath=..")
         supp_wrap.locator(".react-select__input-container").click()
         self.page.keyboard.type(supplier)
-        self.page.wait_for_timeout(300)
-        try:
-            self.page.locator(".react-select__option").filter(has_text=supplier).first.click(timeout=4000)
-        except Exception:
-            self.page.get_by_role("option", name=supplier, exact=False).first.click(timeout=4000)
+        self._pick_option(supplier)
 
         # 3. Fill Reference Number
         if reference_no:
@@ -127,11 +128,7 @@ class PurchasesPage(BasePage):
                 prod_wrap.locator(".react-select__input-container").click()
                 prod_name = str(item["product"])
                 self.page.keyboard.type(prod_name)
-                self.page.wait_for_timeout(300)
-                try:
-                    self.page.locator(".react-select__option").filter(has_text=prod_name).first.click(timeout=4000)
-                except Exception:
-                    self.page.get_by_role("option", name=prod_name, exact=False).first.click(timeout=4000)
+                self._pick_option(prod_name)
 
                 serials = [str(serial) for serial in item.get("serials") or []]
                 quantity_value = str(len(serials)) if serials else str(item["quantity"])
@@ -153,7 +150,6 @@ class PurchasesPage(BasePage):
         # recalculate paid_amount when a product is selected.
         self.paid_amount_input.fill(str(paid_amount))
         self.paid_amount_input.blur()
-        self.page.wait_for_timeout(200)
 
         if float(paid_amount) > 0:
             self.purchase_type_select.wait_for(state="visible", timeout=5000)
@@ -165,9 +161,15 @@ class PurchasesPage(BasePage):
                 self.bank_account_select.click()
                 self.page.get_by_role("option", name=bank_account).click()
 
+        # A product's cost price can land after our fill; make sure every line still has ours.
+        for i, item in enumerate(products_data or []):
+            if "price" in item:
+                price_input = self.page.locator(f"input[name='items.{i}.purchase_price']")
+                if price_input.input_value() != str(item["price"]):
+                    price_input.fill(str(item["price"]))
+
         def record_create(response: Response) -> None:
-            path = urlparse(response.url).path.rstrip("/")
-            if response.request.method == "POST" and (path.endswith("/purchase") or path.endswith("/purchases")):
+            if self._is_create_response(response):
                 try:
                     body = response.json()
                 except Exception:
@@ -193,48 +195,26 @@ class PurchasesPage(BasePage):
         paid_amount: str,
         purchase_type: str,
     ) -> PurchaseResult:
-        # Click Create
-        self.create_button.click()
-
-        # Confirmation dialog check if needed
         try:
-            confirm_btn = self.page.locator("div.modal-footer button, div[role='dialog'] button").filter(has_text=re.compile(r"^Create$", re.IGNORECASE))
-            if confirm_btn.count() > 0 and confirm_btn.first.is_visible():
-                confirm_btn.first.click()
-        except Exception:
-            pass
-
-        # Check for error toasts / alerts first to fail fast
-        err_alert = self.page.locator(".Toastify__toast--error, .alert-danger, .invalid-feedback").first
-        if err_alert.count() > 0 and err_alert.is_visible():
-            raise RuntimeError(f"Purchase creation failed with error: {err_alert.inner_text()}")
-
-        # Wait for success toast or redirect
-        toast_found = False
-        try:
-            toast = self.page.locator(".Toastify__toast-body, .toast-body, [role='alert'], .ant-message").filter(
-                has_text=re.compile(r"Purchase.*(?:created|added|success)", re.IGNORECASE)
-            ).first
-            toast.wait_for(state="visible", timeout=8000)
-            toast_found = True
-        except Exception:
-            try:
-                self.page.get_by_text(re.compile(r"Purchase (?:created|added|success)", re.IGNORECASE)).first.wait_for(
-                    state="visible", timeout=3000
+            with self.page.expect_response(self._is_create_response, timeout=20000):
+                self.create_button.click()
+                confirm_btn = self.page.locator("div.modal-footer button, div[role='dialog'] button").filter(
+                    has_text=re.compile(r"^Create$", re.IGNORECASE)
                 )
-                toast_found = True
-            except Exception:
-                try:
-                    self.page.wait_for_url(lambda url: "/purchases" in url and "/add" not in url, timeout=5000)
-                    toast_found = True
-                except Exception:
-                    pass
+                if confirm_btn.count() > 0 and confirm_btn.first.is_visible():
+                    confirm_btn.first.click()
+        except PlaywrightTimeoutError:
+            errors = [t.strip() for t in self.page.locator(".invalid-feedback, .text-danger, .alert-danger").all_inner_texts()]
+            raise RuntimeError(
+                f"Purchase {reference_no} was not submitted; form errors: {[e for e in errors if e and e != '*']}"
+            ) from None
 
-        if not toast_found:
-            # Check if any error text is visible on the page
-            page_text = self.page.locator("body").inner_text()
-            if "error" in page_text.lower() or "failed" in page_text.lower() or "required" in page_text.lower():
-                raise RuntimeError(f"Purchase creation failed: validation or API error on page: {page_text[:300]}")
+        record = self.last_purchase_response
+        if record.get("status") not in (200, 201):
+            body = record.get("body") or {}
+            raise RuntimeError(
+                f"Purchase {reference_no} rejected ({record.get('status')}): {body.get('message')} {body.get('errors') or ''}"
+            )
 
         self.navigate()
         return PurchaseResult(
@@ -329,4 +309,4 @@ class PurchasesPage(BasePage):
         self.search_purchase(reference_no)
         row = self.page.locator("table tbody tr").filter(has_text=reference_no).first
         row.locator("button[title*='return' i], button:has(i.bi-arrow-repeat)").first.click()
-        self.page.wait_for_load_state("networkidle")
+        self.page.get_by_role("dialog").wait_for(state="visible", timeout=15000)

@@ -68,7 +68,8 @@ class TestResLedgerStatementFilters:
 
         today = date.today().isoformat()
         last_month = (date.today() - timedelta(days=30)).isoformat()
-        report_page.set_date_range(last_month, today)
+        # No ledger is chosen, so there is no statement to fetch; this checks the date inputs only.
+        report_page.set_date_range(last_month, today, auto_filter=False)
 
         assert page.locator("input[type='date']").first.input_value() == last_month
 

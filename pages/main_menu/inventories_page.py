@@ -3,7 +3,10 @@ from __future__ import annotations
 import re
 import time
 from decimal import Decimal
-from playwright.sync_api import Page, Locator
+from typing import Callable
+from urllib.parse import parse_qs, urlparse
+
+from playwright.sync_api import Page, Locator, Response, expect
 from pages.common.base_page import BasePage
 from utils.tenants import Tenant
 
@@ -15,8 +18,37 @@ class InventoriesPage(BasePage):
         super().__init__(page, tenant)
 
     def navigate(self) -> None:
-        self.page.goto(self.url)
-        self.page.wait_for_load_state("networkidle")
+        self._reload_list(lambda: self.page.goto(self.url))
+
+    # ── List loading ──────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _list_params(response: Response) -> dict[str, str] | None:
+        url = urlparse(response.url)
+        if (
+            response.request.method != "GET"
+            or response.request.resource_type not in {"fetch", "xhr"}
+            or not url.path.rstrip("/").endswith("/inventories")
+        ):
+            return None
+        return {key: values[-1] for key, values in parse_qs(url.query).items()}
+
+    def _reload_list(self, action: Callable[[], object], **expected: str) -> None:
+        """Run `action`, wait for the inventory list it triggers (matching `expected` query params) and its render."""
+
+        def matches(response: Response) -> bool:
+            params = self._list_params(response)
+            return params is not None and all(params.get(key) == value for key, value in expected.items())
+
+        with self.page.expect_response(matches, timeout=15000) as info:
+            action()
+        data = info.value.json().get("data")
+        items = data.get("data", data.get("items")) if isinstance(data, dict) else data
+        rows = self.page.locator("table tbody tr")
+        if isinstance(items, list) and items:
+            expect(rows).to_have_count(len(items), timeout=10000)
+        else:
+            rows.first.wait_for(state="visible", timeout=10000)
 
     # ── Dynamic @property Locators ──────────────────────────────────────────
 
@@ -50,17 +82,16 @@ class InventoriesPage(BasePage):
     # ── Search ────────────────────────────────────────────────────────────────
 
     def search_inventory(self, product_name: str) -> bool:
-        try:
-            self.search_input.wait_for(state="visible", timeout=10000)
-            self.search_input.fill(product_name)
-            self.search_input.press("Enter")
-            self.page.wait_for_timeout(300)
-            self.page.locator("table tbody tr").filter(
-                has_text=product_name
-            ).first.wait_for(state="visible", timeout=5000)
-            return True
-        except Exception:
-            return False
+        """Search the inventory list; True when a row containing `product_name` is shown."""
+        self.search_input.wait_for(state="visible", timeout=10000)
+        if self.search_input.input_value() != product_name:
+
+            def search() -> None:
+                self.search_input.fill(product_name)
+                self.search_input.press("Enter")
+
+            self._reload_list(search, search=product_name)
+        return self.is_product_in_table(product_name)
 
     # ── Read Stock Values ─────────────────────────────────────────────────────
 
@@ -156,23 +187,15 @@ class InventoriesPage(BasePage):
             pass
 
     def filter_by_branch(self, branch_name: str) -> None:
+        """Filter the list to one branch; fails if the branch can't be picked (never shows all branches instead)."""
         self.expand_filters()
-        try:
-            branch_select = self.page.locator("input[name='branch_id']").locator("xpath=..").locator(".react-select__control, .react-select__input-container").first
-            branch_select.wait_for(state="visible", timeout=5000)
-            branch_select.click()
-            self.page.wait_for_timeout(300)
-            self.page.keyboard.type(branch_name[:12], delay=30)
-            self.page.wait_for_timeout(500)
-            self.page.get_by_role("option", name=branch_name).first.click()
-        except Exception:
-            try:
-                self.page.locator(".react-select__control").first.click()
-                self.page.get_by_role("option", name=branch_name).first.click()
-            except Exception:
-                pass
-        self.page.get_by_role("button", name="Filter", exact=True).click()
-        self.page.wait_for_load_state("networkidle")
+        branch_select = self.page.locator("input[name='branch_id']").locator("xpath=..").locator(
+            ".react-select__control, .react-select__input-container"
+        ).first
+        branch_select.click()
+        self.page.keyboard.type(branch_name[:12], delay=30)
+        self.page.get_by_role("option", name=branch_name).first.click()
+        self._reload_list(self.page.get_by_role("button", name="Filter", exact=True).click)
 
     def get_available_stock_for_branch(self, product_name: str, branch_name: str) -> Decimal:
         """Navigate, filter by branch, and read available stock for the product."""
@@ -186,33 +209,25 @@ class InventoriesPage(BasePage):
         cat_select.wait_for(state="visible", timeout=5000)
         cat_select.click()
         self.page.get_by_role("option", name=category_name).click()
-        self.page.get_by_role("button", name="Filter", exact=True).click()
+        self._reload_list(self.page.get_by_role("button", name="Filter", exact=True).click)
 
     def toggle_low_stock_filter(self) -> None:
         self.expand_filters()
         self.page.locator("input[name='low_stock_only']").check()
-        with self.page.expect_response(
-            lambda r: "/inventories" in r.url and "low_stock_only=true" in r.url
-        ) as response_info:
-            self.page.get_by_role("button", name="Filter", exact=True).click()
-        response_info.value.finished()
-        self.page.wait_for_load_state("networkidle", timeout=5000)
+        self._reload_list(self.page.get_by_role("button", name="Filter", exact=True).click, low_stock_only="true")
 
     def clear_filters(self) -> None:
+        """Reset the filters and wait for the unfiltered list."""
         self.expand_filters()
-        try:
-            low_stock_cb = self.page.locator("input[name='low_stock_only']")
-            if low_stock_cb.count() > 0 and low_stock_cb.is_checked():
-                low_stock_cb.uncheck()
-            clear_btn = self.page.get_by_role("button", name=re.compile(r"Clear", re.I)).or_(self.page.get_by_text(re.compile(r"Clear Filter", re.I)))
-            if clear_btn.count() > 0 and clear_btn.first.is_visible():
-                clear_btn.first.click()
-            else:
-                filter_btn = self.page.get_by_role("button", name="Filter", exact=True)
-                if filter_btn.is_visible():
-                    filter_btn.click()
-            self.page.wait_for_load_state("networkidle", timeout=5000)
-        except Exception:
+        low_stock_cb = self.page.locator("input[name='low_stock_only']")
+        if low_stock_cb.count() > 0 and low_stock_cb.is_checked():
+            low_stock_cb.uncheck()
+        clear_btn = self.page.get_by_role("button", name=re.compile(r"Clear", re.I)).or_(
+            self.page.get_by_text(re.compile(r"Clear Filter", re.I))
+        )
+        if clear_btn.count() > 0 and clear_btn.first.is_visible():
+            self._reload_list(clear_btn.first.click)
+        else:
             self.navigate()
 
     def is_table_empty(self) -> bool:
@@ -226,11 +241,9 @@ class InventoriesPage(BasePage):
 
     def is_product_in_table(self, product_name: str) -> bool:
         try:
-            self.page.locator("table tbody tr").filter(
-                has_text=product_name
-            ).first.wait_for(state="visible", timeout=5000)
+            expect(self.page.locator("table tbody tr").filter(has_text=product_name).first).to_be_visible(timeout=5000)
             return True
-        except Exception:
+        except AssertionError:
             return False
 
     # ── Detail View (Drawer) ──────────────────────────────────────────────────

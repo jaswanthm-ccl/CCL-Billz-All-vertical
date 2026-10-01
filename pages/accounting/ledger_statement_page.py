@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import re
+import time
 from decimal import Decimal
 from urllib.parse import urlparse
 
-from playwright.sync_api import Page
+from playwright.sync_api import Page, expect
 
 from pages.common.base_page import BasePage
 from utils.tenants import Tenant
@@ -32,6 +33,7 @@ class LedgerStatementPage(BasePage):
 
     def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
         super().__init__(page, tenant)
+        self.last_statement: dict = {}
 
     # ══════════════════════════════════════════════════════════════════════════
     # NAVIGATION
@@ -91,39 +93,23 @@ class LedgerStatementPage(BasePage):
         if search.count() > 0 and search.first.is_visible():
             search.first.fill("")
             search.first.press_sequentially(option_name, delay=20)
-            self.page.wait_for_timeout(400)
         else:
             self.page.keyboard.type(option_name)
-            self.page.wait_for_timeout(400)
 
+        # Prefer the exact name; same-named ledgers exist per branch ("Cash Ledger — <branch>").
         exact_option = self.page.get_by_role("option", name=option_name, exact=True)
-        try:
-            exact_option.wait_for(state="visible", timeout=6000)
-            exact_option.click()
-        except Exception:
-            matching_options = self.page.locator(".react-select__option, div[class*='-option']").filter(
-                has_text=option_name
-            )
-            if matching_options.count() > 0:
-                matching_options.first.wait_for(state="visible", timeout=10000)
-                matching_options.first.click()
-            else:
-                self.page.keyboard.press("Enter")
+        partial_options = self.page.locator(".react-select__option, div[class*='-option']").filter(has_text=option_name)
+        expect(exact_option.or_(partial_options).first).to_be_visible(timeout=10000)
+        (exact_option if exact_option.count() else partial_options).first.click()
 
-        try:
-            selected.wait_for(state="visible", timeout=5000)
-        except Exception:
-            pass
+        expect(selected).to_contain_text(option_name, timeout=5000)
 
 
     def select_ledger(self, ledger_name: str, auto_filter: bool = True) -> None:
         """Select a ledger from the first React-Select dropdown."""
         self._select_react_option(0, ledger_name)
         if auto_filter:
-            try:
-                self.click_filter()
-            except Exception:
-                pass
+            self.click_filter()
 
     def select_branch(self, branch_name: str, auto_filter: bool = True) -> None:
         """Select a branch from the branch React-Select dropdown (second dropdown)."""
@@ -133,10 +119,7 @@ class LedgerStatementPage(BasePage):
             raise RuntimeError("Ledger Statement branch filter is not available")
         self._select_react_option(1, branch_name)
         if auto_filter:
-            try:
-                self.click_filter()
-            except Exception:
-                pass
+            self.click_filter()
 
     def set_from_date(self, date_str: str) -> None:
         """Set the From Date filter. Format: YYYY-MM-DD."""
@@ -157,44 +140,39 @@ class LedgerStatementPage(BasePage):
         self.set_from_date(from_date)
         self.set_to_date(to_date)
         if auto_filter:
-            try:
-                self.click_filter()
-            except Exception:
-                pass
+            self.click_filter()
 
     @staticmethod
     def _is_statement_response(response) -> bool:
         return (
             "ledger-statement" in response.url.lower()
             and response.request.method == "GET"
+            and response.request.resource_type in {"fetch", "xhr"}
         )
 
-    def click_filter(self) -> None:
-        """Click the Filter button to fetch statement data."""
+    def click_filter(self) -> dict:
+        """Click Filter, wait for the statement API and for the page to show its numbers; returns the API data."""
         self._ensure_filters_expanded()
         filter_btn = self.page.get_by_role("button", name="Filter", exact=True).first
-        filter_btn.wait_for(state="visible", timeout=10000)
-        try:
-            with self.page.expect_response(self._is_statement_response, timeout=8000) as info:
-                filter_btn.click()
-            response = info.value
-            if not response.ok:
-                raise RuntimeError(
-                    f"Ledger Statement request failed with HTTP {response.status}"
-                )
-        except Exception:
+        with self.page.expect_response(self._is_statement_response, timeout=20000) as info:
             filter_btn.click()
-            try:
-                self.page.wait_for_load_state("networkidle", timeout=8000)
-            except Exception:
-                pass
+        response = info.value
+        if not response.ok:
+            raise RuntimeError(f"Ledger Statement request failed with HTTP {response.status}: {response.text()[:200]}")
+        self.last_statement = response.json().get("data") or {}
+        self._wait_for_rendered_closing(Decimal(str(self.last_statement.get("closing_balance") or 0)))
+        return self.last_statement
 
-        try:
-            self.page.get_by_text(re.compile(r"Opening Balance|Closing Balance|Running Balance|Date", re.I)).first.wait_for(
-                state="visible", timeout=10000
-            )
-        except Exception:
-            pass
+    def _wait_for_rendered_closing(self, expected: Decimal, timeout_s: float = 10) -> None:
+        """Block until the Closing Balance card shows the API's value (the cards re-render after the response)."""
+        deadline = time.monotonic() + timeout_s
+        shown = ""
+        while time.monotonic() < deadline:
+            shown = self.get_closing_balance()
+            if abs(self.parse_signed_balance(shown or "0")) == abs(expected):
+                return
+            self.page.wait_for_timeout(200)
+        raise AssertionError(f"Closing Balance shows '{shown}', but the statement API returned {expected}")
 
 
     def filter_statement(self, ledger_name: str, branch_name: str | None = None) -> None:

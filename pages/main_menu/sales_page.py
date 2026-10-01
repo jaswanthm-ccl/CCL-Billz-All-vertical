@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import re
 from decimal import Decimal
-from urllib.parse import urlparse
-from playwright.sync_api import Page, Response
+from urllib.parse import parse_qs, urlparse
+from playwright.sync_api import Page, Response, TimeoutError as PlaywrightTimeoutError, expect
 from pages.common.base_page import BasePage
 from utils.models import SaleResult
 from utils.tenants import Tenant
@@ -15,9 +15,13 @@ class SalesPage(BasePage):
         super().__init__(page, tenant)
         self.last_sale_response: dict = {}
 
-    def _record_sale_create(self, response: Response) -> None:
+    @staticmethod
+    def _is_create_response(response: Response) -> bool:
         path = urlparse(response.url).path.rstrip("/")
-        if response.request.method == "POST" and (path.endswith("/sales") or path.endswith("/sale")):
+        return response.request.method == "POST" and (path.endswith("/sales") or path.endswith("/sale"))
+
+    def _record_sale_create(self, response: Response) -> None:
+        if self._is_create_response(response):
             try:
                 body = response.json()
             except Exception:
@@ -30,34 +34,49 @@ class SalesPage(BasePage):
 
     def scan_serials(self, row_idx: int, serials: list[str]) -> None:
         """Enter tracked unit values (serials) through the line's scanner box; quantity follows the count."""
-        scanner = self.page.locator(f"table tbody tr:nth-child({row_idx})").get_by_placeholder(
-            re.compile(r"^Scan .* here", re.I)
-        ).first
+        row = self.page.locator(f"table tbody tr:nth-child({row_idx})")
+        scanner = row.get_by_placeholder(re.compile(r"^Scan .* here", re.I)).first
         scanner.wait_for(state="visible", timeout=10000)
         for serial in serials:
             scanner.fill(str(serial))
             scanner.press("Enter")
-            self.page.wait_for_timeout(400)
+            # The accepted serial is listed on the line before the box takes the next one.
+            row.get_by_text(str(serial)).first.wait_for(state="visible", timeout=10000)
+
+    @property
+    def _search_box(self):
+        return self.page.get_by_role("textbox", name="Search...")
+
+    @staticmethod
+    def _is_list_response(response: Response, search: str | None = None) -> bool:
+        url = urlparse(response.url)
+        if (
+            response.request.method != "GET"
+            or response.request.resource_type not in {"fetch", "xhr"}
+            or not url.path.rstrip("/").endswith("/sales")
+        ):
+            return False
+        return search is None or parse_qs(url.query).get("search", [""])[-1] == search
 
     def navigate(self) -> None:
-        self.page.goto(self.url)
+        with self.page.expect_response(self._is_list_response, timeout=15000):
+            self.page.goto(self.url)
 
     def is_sales_visible(self) -> bool:
         try:
-            self.page.get_by_role("textbox", name="Search...").wait_for(state="visible", timeout=5000)
+            expect(self._search_box).to_be_visible(timeout=5000)
             return True
-        except Exception:
+        except AssertionError:
             return False
 
+    def _pick_option(self, text: str) -> None:
+        """Click the open react-select's option containing `text`; fails rather than picking another option."""
+        self.page.locator(".react-select__option, div[class*='-option']").filter(has_text=text).first.click()
+
     def _select_branch(self, branch_name: str) -> None:
-        branch_input = self.page.locator("input[name='branch_id']").locator("..").locator(".react-select__input-container")
-        branch_input.click()
+        self.page.locator("input[name='branch_id']").locator("..").locator(".react-select__input-container").click()
         self.page.keyboard.type(branch_name)
-        self.page.wait_for_timeout(400)
-        try:
-            self.page.locator(".react-select__option").filter(has_text=branch_name).first.click(timeout=5000)
-        except Exception:
-            self.page.get_by_role("option", name=branch_name, exact=False).first.click(timeout=5000)
+        self._pick_option(branch_name)
 
     def _select_customer(self, customer_name: str) -> None:
         wrapper = self.page.locator("input[name='customer_id'], input[name='client_id']").locator("xpath=..")
@@ -66,14 +85,9 @@ class SalesPage(BasePage):
             input_box.first.click()
             input_box.first.fill(customer_name)
         else:
-            cust_input = wrapper.locator(".react-select__input-container")
-            cust_input.click()
+            wrapper.locator(".react-select__input-container").click()
             self.page.keyboard.type(customer_name)
-        self.page.wait_for_timeout(500)
-        try:
-            self.page.locator(".react-select__option").filter(has_text=customer_name).first.click(timeout=5000)
-        except Exception:
-            self.page.get_by_role("option", name=customer_name, exact=False).first.click(timeout=5000)
+        self._pick_option(customer_name)
 
     def _select_address(self, address_text: str) -> None:
         """Select a specific address from the customer's saved addresses."""
@@ -102,21 +116,7 @@ class SalesPage(BasePage):
             search.first.press_sequentially(product_name, delay=20)
         else:
             self.page.keyboard.type(product_name)
-        self.page.wait_for_timeout(500)
-
-        try:
-            opt = self.page.get_by_role("option", name=product_name, exact=False).first
-            opt.wait_for(state="visible", timeout=6000)
-            opt.click()
-        except Exception:
-            matching = self.page.locator(".react-select__option, div[class*='-option']").filter(has_text=product_name)
-            if matching.count() > 0:
-                matching.first.wait_for(state="visible", timeout=6000)
-                matching.first.click()
-            else:
-                self.page.keyboard.press("Enter")
-        self.page.wait_for_timeout(400)
-
+        self._pick_option(product_name)
 
 
 
@@ -132,11 +132,7 @@ class SalesPage(BasePage):
             self.page.get_by_text(re.compile(r"^Bank Account \*")).wait_for(state="visible", timeout=5000)
             self.page.locator("input[name='bank_account_id']").locator("xpath=..").locator(".react-select__input-container").click()
             self.page.keyboard.type(payment_method)
-            self.page.wait_for_timeout(300)
-            try:
-                self.page.locator(".react-select__option").filter(has_text=payment_method).first.click(timeout=4000)
-            except Exception:
-                self.page.get_by_role("option", name=payment_method, exact=False).click(timeout=4000)
+            self._pick_option(payment_method)
 
     def add_sale(
         self, customer_name: str, branch_name: str, paid_amount: str, price: str,
@@ -148,16 +144,10 @@ class SalesPage(BasePage):
         """serials: tracked unit values to sell on the first line; replaces quantity."""
         self.last_sale_response = {}
         self.page.goto(f"{self.url}/add")
-        try:
-            self.page.wait_for_load_state("domcontentloaded")
-            self.page.wait_for_load_state("networkidle", timeout=5000)
-        except Exception:
-            pass
+        self.page.locator("input[name='branch_id']").wait_for(state="attached", timeout=15000)
 
         self._select_branch(branch_name)
-        self.page.wait_for_timeout(800)
         self._select_customer(customer_name)
-        self.page.wait_for_timeout(800)
 
         if sale_date:
             self.page.locator("input[name='sale_date']").fill(sale_date)
@@ -168,7 +158,6 @@ class SalesPage(BasePage):
             except Exception:
                 self.page.locator("div:nth-child(3) > .mb-3 > .css-b62m3t-container > .react-select__control > .react-select__value-container > .react-select__input-container").click()
             self.page.get_by_role("option", name=salesperson_name).click()
-            self.page.wait_for_timeout(500)
 
         if address_text:
             self._select_address(address_text)
@@ -180,14 +169,12 @@ class SalesPage(BasePage):
             quantity = len(serials)
         elif quantity is not None:
             qty_input = self.page.locator("tr:nth-child(1)").get_by_placeholder("Quantity")
-            try:
-                qty_input.wait_for(state="visible", timeout=5000)
-                if qty_input.is_editable():
-                    qty_input.fill(str(quantity))
-            except Exception:
-                pass
+            qty_input.wait_for(state="visible", timeout=10000)
+            if qty_input.is_editable():
+                qty_input.fill(str(quantity))
 
-        self.page.get_by_placeholder("Price").first.fill(str(price))
+        price_input = self.page.get_by_placeholder("Price").first
+        price_input.fill(str(price))
         self.page.locator('input[name="paid_amount"]').fill(str(paid_amount))
 
 
@@ -208,11 +195,7 @@ class SalesPage(BasePage):
                 else:
                     self.page.locator(".react-select__input-container").last.click()
                 self.page.keyboard.type(emi_provider_name)
-                self.page.wait_for_timeout(400)
-                try:
-                    self.page.locator(".react-select__option").filter(has_text=emi_provider_name).first.click(timeout=4000)
-                except Exception:
-                    self.page.get_by_role("option", name=emi_provider_name, exact=False).first.click(timeout=4000)
+                self._pick_option(emi_provider_name)
 
             if emi_financed_amount:
                 financed_input = self.page.locator('input[name="emi_financed_amount"]')
@@ -225,56 +208,37 @@ class SalesPage(BasePage):
                         f"EMI financed amount shows {shown}, expected {emi_financed_amount}"
                     )
 
+        # The product's selling price can land after our fill; make sure the line still has ours.
+        if price_input.input_value() != str(price):
+            price_input.fill(str(price))
+
         self.page.on("response", self._record_sale_create)
         try:
-            self.page.get_by_role("button", name="Create").click()
-            try:
-                confirm_btn = self.page.locator("div.modal-footer button, div[role='dialog'] button, .modal-dialog button").filter(has_text=re.compile(r"^(?:Create|Yes|Confirm)$", re.IGNORECASE))
+            with self.page.expect_response(self._is_create_response, timeout=20000):
+                self.page.get_by_role("button", name="Create").click()
+                confirm_btn = self.page.locator(
+                    "div.modal-footer button, div[role='dialog'] button, .modal-dialog button"
+                ).filter(has_text=re.compile(r"^(?:Create|Yes|Confirm)$", re.IGNORECASE))
                 if confirm_btn.count() > 0 and confirm_btn.first.is_visible():
                     confirm_btn.first.click()
-            except Exception:
-                pass
-
-            # Check for error toasts / alerts first to fail fast
-            err_alert = self.page.locator(".Toastify__toast--error, .alert-danger, .invalid-feedback").first
-            if err_alert.count() > 0 and err_alert.is_visible():
-                raise RuntimeError(f"Sale creation failed with error: {err_alert.inner_text()}")
-
-            # Wait for toast or redirect
-            toast_found = False
-            try:
-                toast = self.page.locator(".Toastify__toast-body, .toast-body, [role='alert'], .ant-message").filter(
-                    has_text=re.compile(r"Sale.*(?:created|added|success)", re.IGNORECASE)
-                ).first
-                toast.wait_for(state="visible", timeout=10000)
-                toast_found = True
-            except Exception:
-                try:
-                    self.page.get_by_text(re.compile(r"Sale (?:created|added)", re.IGNORECASE)).first.wait_for(state="visible", timeout=5000)
-                    toast_found = True
-                except Exception:
-                    pass
+        except PlaywrightTimeoutError:
+            errors = [t.strip() for t in self.page.locator(".invalid-feedback, .text-danger, .alert-danger").all_inner_texts()]
+            raise RuntimeError(
+                f"Sale was not submitted for {customer_name}; form errors: {[e for e in errors if e and e != '*']}"
+            ) from None
         finally:
             self.page.remove_listener("response", self._record_sale_create)
-        
-        # Navigate to Sales List to retrieve invoice number
-        try:
-            self.page.get_by_role("button", name="Sales List").click(timeout=3000)
-        except Exception:
-            self.navigate()
-        self.page.wait_for_load_state("networkidle")
 
-        # Search for customer to find the created invoice number
-        self.search_sale(customer_name)
-        first_row = self.page.locator("table tbody tr").filter(has_text=customer_name).first
-        first_row.wait_for(state="visible", timeout=10000)
-        
-        cells = first_row.locator("td").all()
-        # Invoice number is usually first or second column
-        invoice_no = cells[0].inner_text().strip() if len(cells) > 0 else ""
-        if not invoice_no or invoice_no == customer_name:
-            invoice_no = cells[1].inner_text().strip() if len(cells) > 1 else ""
-        invoice_no = invoice_no.lstrip("#").strip()
+        record = self.last_sale_response
+        if record.get("status") not in (200, 201):
+            body = record.get("body") or {}
+            raise RuntimeError(
+                f"Sale rejected ({record.get('status')}) for {customer_name}: {body.get('message')} {body.get('errors') or ''}"
+            )
+        sale = (record.get("body") or {}).get("data") or {}
+        invoice_no = str(sale.get("invoice_id") or "").lstrip("#").strip()
+
+        self.navigate()
 
         qty_val = Decimal(str(quantity if quantity is not None else 1))
         unit_price = Decimal(str(price))
@@ -287,6 +251,7 @@ class SalesPage(BasePage):
             total_amount=total_amount,
             paid_amount=Decimal(str(paid_amount)),
             payment_method=payment_method,
+            sale_id=str(sale["id"]) if sale.get("id") is not None else None,
         )
 
     def view_sale_by_invoice(self, invoice_no: str) -> dict[str, str | bool]:
@@ -295,17 +260,36 @@ class SalesPage(BasePage):
         row = self.page.locator("table tbody tr").filter(has_text=invoice_no).first
         row.wait_for(state="visible", timeout=10000)
         row.locator('button[title="view"], button[title="View"], a[title="view"]').first.click()
+        return self._read_open_sale_dialog()
 
+    def view_sale_details(self, customer_name: str | None = None) -> dict[str, str | bool]:
+        if customer_name:
+            self.search_sale(customer_name)
+        row = self.page.locator("table tbody tr").first
+        row.locator('button[title="view"], button[title="View"], a[title="view"]').first.click()
+        return self._read_open_sale_dialog()
+
+    def search_sale(self, query: str) -> bool:
+        """Search the sales list (live search); True when a row containing `query` is shown."""
+        if self._search_box.input_value() != query:
+            with self.page.expect_response(lambda r: self._is_list_response(r, query), timeout=15000):
+                self._search_box.fill(query)
+        try:
+            expect(self.page.locator("table tbody tr").filter(has_text=query).first).to_be_visible(timeout=10000)
+            return True
+        except AssertionError:
+            return False
+
+    def _read_open_sale_dialog(self) -> dict[str, str | bool]:
+        """Read the open sale-details dialog once its line table has rendered, then close it."""
         dialog = self.page.get_by_role("dialog")
-        dialog.wait_for(state="visible", timeout=10000)
-        self.page.wait_for_timeout(1000)
-
+        dialog.locator("table").first.wait_for(state="visible", timeout=10000)
+        content = dialog.inner_text()
         details = {
-            "has_emi_outstanding": dialog.locator(":has-text('EMI Outstanding')").count() > 0 or dialog.get_by_role("cell", name="EMI Outstanding").count() > 0 or "EMI Outstanding" in dialog.inner_text(),
-            "has_pending_status": dialog.locator(":has-text('Pending')").count() > 0 or dialog.get_by_role("cell", name="Pending").count() > 0 or "Pending" in dialog.inner_text(),
-            "content": dialog.inner_text(),
+            "has_emi_outstanding": "EMI Outstanding" in content,
+            "has_pending_status": "Pending" in content,
+            "content": content,
         }
-
         close_btn = dialog.locator(".btn-close")
         if close_btn.count() > 0 and close_btn.first.is_visible():
             close_btn.first.click()
@@ -314,60 +298,13 @@ class SalesPage(BasePage):
         dialog.wait_for(state="hidden", timeout=5000)
         return details
 
-    def view_sale_details(self, customer_name: str | None = None) -> dict[str, str | bool]:
-        if customer_name:
-            self.search_sale(customer_name)
-        row = self.page.locator("table tbody tr").first
-        row.locator('button[title="view"], button[title="View"], a[title="view"]').first.click()
-
-        dialog = self.page.get_by_role("dialog")
-        dialog.wait_for(state="visible", timeout=10000)
-
-        # Allow modal body to populate data
-        self.page.wait_for_timeout(1000)
-
-        details = {
-            "has_emi_outstanding": dialog.locator(":has-text('EMI Outstanding')").count() > 0 or dialog.get_by_role("cell", name="EMI Outstanding").count() > 0 or "EMI Outstanding" in dialog.inner_text(),
-            "has_pending_status": dialog.locator(":has-text('Pending')").count() > 0 or dialog.get_by_role("cell", name="Pending").count() > 0 or "Pending" in dialog.inner_text(),
-            "content": dialog.inner_text(),
-        }
-
-        close_btn = dialog.locator(".btn-close")
-        if close_btn.count() > 0:
-            close_btn.click()
-        else:
-            dialog.get_by_role("button", name="Close").click()
-        dialog.wait_for(state="hidden", timeout=5000)
-        return details
-
-    def search_sale(self, query: str) -> bool:
-        search_box = self.page.get_by_role("textbox", name="Search...")
-        search_box.fill(query)
-        search_box.press("Enter")
-        try:
-            self.page.wait_for_load_state("networkidle", timeout=10000)
-        except Exception:
-            pass
-        try:
-            self.page.locator("table tbody tr").filter(has_text=query).first.wait_for(
-                state="visible", timeout=10000
-            )
-            return True
-        except Exception:
-            return False
-
-
 
     def filter_sales(self, salesperson_name: str | None = None, branch_name: str | None = None) -> None:
         self.navigate()
-        self.page.wait_for_load_state("networkidle")
 
-        try:
-            expand_btn = self.page.get_by_role("button", name="Expand filters")
-            if expand_btn.is_visible():
-                expand_btn.click()
-        except Exception:
-            pass
+        expand_btn = self.page.get_by_role("button", name="Expand filters")
+        if expand_btn.count() and expand_btn.is_visible():
+            expand_btn.click()
 
         if salesperson_name:
             try:
@@ -381,7 +318,6 @@ class SalesPage(BasePage):
                     except Exception:
                         self.page.locator(".react-select__input-container").last.click()
             self.page.get_by_role("option", name=salesperson_name).click()
-            self.page.wait_for_timeout(500)
 
         if branch_name:
             try:
@@ -389,10 +325,9 @@ class SalesPage(BasePage):
             except Exception:
                 self.page.locator(".react-select__input-container").first.click()
             self.page.get_by_role("option", name=branch_name).click()
-            self.page.wait_for_timeout(500)
 
-        self.page.get_by_role("button", name="Filter", exact=True).click()
-        self.page.wait_for_load_state("networkidle")
+        with self.page.expect_response(self._is_list_response, timeout=15000):
+            self.page.get_by_role("button", name="Filter", exact=True).click()
 
     def view_sale(self, query: str, branch_name: str, salesperson_name: str) -> bool:
         self.search_sale(query)
@@ -431,19 +366,13 @@ class SalesPage(BasePage):
         
         toast = self.page.get_by_text("Sale updated successfully.")
         toast.wait_for(state="visible", timeout=10000)
-        
-        # Click Sales List or navigate
-        try:
-            self.page.get_by_role("button", name="Sales List").click(timeout=3000)
-        except Exception:
-            self.navigate()
-        self.page.wait_for_load_state("networkidle")
+        self.navigate()
 
     def initiate_sale_return(self, query: str) -> None:
         self.search_sale(query)
         row = self.page.locator("table tbody tr").filter(has_text=query).first
         row.get_by_title("Sale Return").first.click()
-        self.page.wait_for_load_state("networkidle")
+        self.page.get_by_role("button", name="Return").wait_for(state="visible", timeout=15000)
 
     def download_invoice(self, query: str) -> str | None:
         self.search_sale(query)
