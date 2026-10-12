@@ -260,7 +260,7 @@ def branch_only_page(browser: Browser, rbac_state: RbacState):
             marks=pytest.mark.xfail(
                 strict=True,
                 reason=(
-                    "Known UI permission bug: Add City is visible without "
+                    "BUG_018: Add City is visible without "
                     "create_cities; the API correctly returns 403"
                 ),
             ),

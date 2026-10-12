@@ -146,7 +146,7 @@ def test_required_branch_fields(logged_in_page, field, error_text):
             "test@gmail",
             (r"invalid email", r"email.*format"),
             marks=pytest.mark.xfail(
-                reason="Known bug: Branch email without a valid domain suffix is accepted"
+                reason="BUG_006: Branch email without a valid domain suffix is accepted"
             ),
             id="email-without-domain-suffix",
         ),
@@ -176,7 +176,7 @@ def test_branch_sort_order_validation(logged_in_page, sort_order):
     ), f"Expected Sort Order validation for {sort_order!r}"
 
 
-@pytest.mark.xfail(reason="Known bug: clearing Sort Order during Branch edit produces an SQL error")
+@pytest.mark.xfail(reason="BUG_007: clearing Sort Order during Branch edit produces an SQL error")
 def test_edit_branch_with_blank_sort_order(logged_in_page, branch_cleanup):
     branches_page = BranchesPage(logged_in_page)
     branches_page.navigate()
@@ -202,7 +202,7 @@ def test_validate_branch_phone(logged_in_page, phone):
     )
 
 
-@pytest.mark.xfail(reason="Known bug: phone numbers starting outside 6-9 are accepted (validation shows only intermittently)")
+@pytest.mark.xfail(reason="BUG_009: phone numbers starting outside 6-9 are accepted (validation shows only intermittently)")
 def test_reject_branch_phone_with_invalid_start_digit(logged_in_page):
     branches_page = BranchesPage(logged_in_page)
     branches_page.navigate()

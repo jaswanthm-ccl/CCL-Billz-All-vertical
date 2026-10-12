@@ -127,7 +127,7 @@ def test_default_city_selection_persists(logged_in_page, city_cleanup):
 
 
 @pytest.mark.xfail(
-    reason="Bug #TBD: City names containing numbers are accepted"
+    reason="BUG_004: City names containing numbers are accepted"
 )
 def test_reject_city_name_containing_numbers(logged_in_page):
     """City name with numbers should be rejected by validation."""
@@ -143,7 +143,7 @@ def test_reject_city_name_containing_numbers(logged_in_page):
 
 
 @pytest.mark.xfail(
-    reason="Bug #TBD: Backend permits deleting a city assigned to an active branch"
+    reason="BUG_005: Backend permits deleting a city assigned to an active branch"
 )
 def test_delete_city_assigned_to_branch_is_blocked(
     logged_in_page,

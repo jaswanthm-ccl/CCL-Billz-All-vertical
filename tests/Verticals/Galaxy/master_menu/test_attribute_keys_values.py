@@ -97,7 +97,7 @@ def test_reject_duplicate_value_for_same_key(values_page, variant_key, existing_
 
 
 @pytest.mark.xfail(
-    reason="UX bug: a duplicate value only shows a generic 'Validation failed' toast, not the reason from the API"
+    reason="BUG_002: a duplicate value only shows a generic 'Validation failed' toast, not the reason from the API"
 )
 def test_duplicate_value_error_explains_reason(values_page, variant_key, existing_value):
     values_page.submit_attribute_value(variant_key, existing_value)

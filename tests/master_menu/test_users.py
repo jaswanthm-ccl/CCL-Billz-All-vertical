@@ -138,7 +138,7 @@ def test_validate_user_email_and_password(
 
 
 @pytest.mark.xfail(
-    reason="Known bug: user email without a valid domain suffix is accepted"
+    reason="BUG_024: user email without a valid domain suffix is accepted"
 )
 def test_reject_user_email_without_valid_domain_suffix(
     logged_in_page, branch_cleanup, role_cleanup

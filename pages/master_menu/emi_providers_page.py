@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import re
-from playwright.sync_api import Page, Response, expect
+from urllib.parse import parse_qs, urlparse
+
+from playwright.sync_api import Page, Response
 
 from utils.constants import (
     LIST_TIMEOUT,
@@ -38,12 +40,22 @@ class EmiProvidersPage(BasePage):
         return self.page.get_by_role("textbox", name="e.g. Bajaj Finserv")
 
     @staticmethod
-    def _is_list_response(response: Response) -> bool:
-        return (
-            response.request.method == "GET"
-            and response.request.resource_type in {"fetch", "xhr"}
-            and re.search(r"/emi-providers(?:\?|$)", response.url) is not None
-        )
+    def _is_list_response(response: Response, search: str | None = None) -> bool:
+        url = urlparse(response.url)
+        if (
+            response.request.method != "GET"
+            or response.request.resource_type not in {"fetch", "xhr"}
+            or not url.path.rstrip("/").endswith("/emi-providers")
+        ):
+            return False
+        return search is None or parse_qs(url.query).get("search", [""])[-1] == search
+
+    def _reload_list(self, action, search: str | None = None) -> None:
+        with self.page.expect_response(
+            lambda r: self._is_list_response(r, search), timeout=LIST_TIMEOUT
+        ):
+            action()
+        self.page.locator("tbody tr").first.wait_for(state="visible", timeout=UI_TIMEOUT)
 
     @staticmethod
     def _is_create_response(response: Response) -> bool:
@@ -79,8 +91,7 @@ class EmiProvidersPage(BasePage):
         ).first
 
     def navigate(self) -> None:
-        self.page.goto(self.url)
-        self.page.wait_for_load_state("networkidle")
+        self._reload_list(lambda: self.page.goto(self.url))
         self.add_button.wait_for(state="visible", timeout=UI_TIMEOUT)
 
     def is_emi_providers_visible(self) -> bool:
@@ -100,7 +111,7 @@ class EmiProvidersPage(BasePage):
         assert response_info.value.status in (200, 201), (
             f"EMI Provider create API returned {response_info.value.status}"
         )
-        self.page.wait_for_timeout(300)
+        self.dialog.wait_for(state="hidden", timeout=UI_TIMEOUT)
         return response_info.value
 
     def validate_duplicate_name(self, name: str) -> bool:
@@ -156,8 +167,8 @@ class EmiProvidersPage(BasePage):
 
     def search_emi_provider(self, name: str) -> bool:
         self.search_box.wait_for(state="visible", timeout=UI_TIMEOUT)
-        self.search_box.fill(name)
-        self.page.wait_for_timeout(400)
+        if self.search_box.input_value() != name:
+            self._reload_list(lambda: self.search_box.fill(name), search=name)
 
         try:
             self._row(name).wait_for(state="visible", timeout=SETTLED_TIMEOUT)
@@ -207,7 +218,7 @@ class EmiProvidersPage(BasePage):
 
         if response_info.value.status not in (200, 204):
             return False
-        self.page.wait_for_timeout(300)
+        self.dialog.wait_for(state="hidden", timeout=UI_TIMEOUT)
         return True
 
     def delete_emi_provider(self, name: str) -> bool:
@@ -226,7 +237,7 @@ class EmiProvidersPage(BasePage):
 
         if response_info.value.status not in (200, 204):
             return False
-        self.page.wait_for_timeout(300)
+        self.dialog.wait_for(state="hidden", timeout=UI_TIMEOUT)
         return True
 
     def restore_emi_provider(self, name: str) -> bool:
@@ -250,5 +261,5 @@ class EmiProvidersPage(BasePage):
             confirm_btn.click()
         if response_info.value.status not in (200, 204):
             return False
-        self.page.wait_for_timeout(300)
+        self.dialog.wait_for(state="hidden", timeout=UI_TIMEOUT)
         return True

@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import re
-from playwright.sync_api import Page, Locator, Response
+from typing import Callable
+from urllib.parse import parse_qs, urlparse
+
+from playwright.sync_api import Page, Locator, Response, TimeoutError as PlaywrightTimeoutError
+
 from pages.common.base_page import BasePage
 from pages.common.components import ReactSelect
 from pages.common.form_page import has_required_field_feedback, has_validation_feedback
@@ -23,9 +27,28 @@ class ProductsPage(BasePage):
     def products_url(self, value: str) -> None:
         self.url = value
 
+    @property
+    def _rows(self):
+        return self.page.locator("table tbody tr")
+
+    @staticmethod
+    def _is_list_response(response: Response, search: str | None = None) -> bool:
+        url = urlparse(response.url)
+        if (
+            response.request.method != "GET"
+            or response.request.resource_type not in {"fetch", "xhr"}
+            or not url.path.rstrip("/").endswith("/products")
+        ):
+            return False
+        return search is None or parse_qs(url.query).get("search", [""])[-1] == search
+
+    def _reload_list(self, action: Callable[[], object], search: str | None = None) -> None:
+        with self.page.expect_response(lambda r: self._is_list_response(r, search), timeout=15000):
+            action()
+        self._rows.first.wait_for(state="visible", timeout=10000)
+
     def navigate(self) -> None:
-        self.page.goto(self.url)
-        self.page.wait_for_load_state("networkidle")
+        self._reload_list(lambda: self.page.goto(self.url))
 
     # ── Dynamic @property Locators ──────────────────────────────────────────
 
@@ -69,6 +92,7 @@ class ProductsPage(BasePage):
         return self.add_product_button.is_visible() or self.search_input.is_visible()
 
     def _select_option(self, container: Locator, option_name: str) -> None:
+        """Pick `option_name`; fails rather than selecting another option."""
         container.wait_for(state="visible", timeout=5000)
         container.click()
 
@@ -78,21 +102,13 @@ class ProductsPage(BasePage):
 
         opt = self.page.get_by_role("option", name=option_name)
         if opt.count() > 0:
-            try:
-                opt.first.wait_for(state="visible", timeout=3000)
-                opt.first.click()
-                return
-            except Exception:
-                pass
+            opt.first.wait_for(state="visible", timeout=5000)
+            opt.first.click()
+            return
 
         fallback = self.page.locator(".react-select__option, div[class*='-option']").filter(has_text=option_name)
-        if fallback.count() > 0:
-            fallback.first.wait_for(state="visible", timeout=3000)
-            fallback.first.click()
-        else:
-            first_opt = self.page.locator(".react-select__option, div[class*='-option']").first
-            first_opt.wait_for(state="visible", timeout=3000)
-            first_opt.click()
+        fallback.first.wait_for(state="visible", timeout=5000)
+        fallback.first.click()
 
     def _fill_product_form(
         self,
@@ -188,19 +204,22 @@ class ProductsPage(BasePage):
         if attribute_keys:
             self._fill_variants(modal, attribute_keys, variants or [])
 
-        response = None
         try:
             with self.page.expect_response(
-                lambda r: "product" in r.url.lower() and r.request.method == "POST",
-                timeout=20000
+                lambda r: r.request.method == "POST"
+                and urlparse(r.url).path.rstrip("/").endswith("/products"),
+                timeout=20000,
             ) as resp_info:
                 self.create_product_button.click()
             response = resp_info.value
-            assert response.status in (200, 201), f"Product creation failed with HTTP {response.status}"
-        except Exception:
-            if self.create_product_button.is_visible():
-                self.create_product_button.click()
-                self.page.wait_for_timeout(1000)
+        except PlaywrightTimeoutError:
+            errors = [t.strip() for t in modal.locator(".text-danger, .invalid-feedback").all_inner_texts() if t.strip() and t.strip() != "*"]
+            raise AssertionError(f"Product '{name}' was not submitted: {errors or 'no request sent'}") from None
+
+        if response.status not in (200, 201):
+            raise AssertionError(
+                f"Product creation failed with HTTP {response.status}: {response.text()[:300]}"
+            )
 
         toast = self.page.get_by_text(re.compile(r"successful|created", re.I)).first
         try:
@@ -329,15 +348,18 @@ class ProductsPage(BasePage):
         return api_rejected and ui_rejected
 
     def search_product(self, name: str) -> bool:
-        self.search_input.fill(name)
-        self.search_input.press("Enter")
-        row = self.page.locator("table tbody tr").filter(has=self.page.get_by_text(name, exact=True))
+        if self.search_input.input_value() != name:
+
+            def search() -> None:
+                self.search_input.fill(name)
+                self.search_input.press("Enter")
+
+            self._reload_list(search, search=name)
+        row = self._rows.filter(has=self.page.get_by_text(name, exact=True))
         try:
             row.first.wait_for(state="visible", timeout=5000)
             return True
         except Exception:
-            
-            
             return False
 
     def view_product(
@@ -407,7 +429,13 @@ class ProductsPage(BasePage):
         delete_btn = modal.get_by_role("button", name="Delete Product")
         try:
             delete_btn.wait_for(state="visible", timeout=3000)
-            delete_btn.click()
+            with self.page.expect_response(
+                lambda r: r.request.method == "DELETE" and "/products" in urlparse(r.url).path,
+                timeout=15000,
+            ) as resp_info:
+                delete_btn.click()
+            if not resp_info.value.ok:
+                return False
         except Exception:
             close_btn = modal.locator(".btn-close")
             if close_btn.is_visible():
@@ -468,7 +496,15 @@ class ProductsPage(BasePage):
         modal.locator("input[name='lines.0.cost_price']").fill(cost_price)
 
         save_btn = modal.get_by_role("button", name=re.compile(r"(?:save|update)", re.IGNORECASE)).first
-        save_btn.click()
+        with self.page.expect_response(
+            lambda r: r.request.method != "GET" and "/products" in urlparse(r.url).path,
+            timeout=15000,
+        ) as resp_info:
+            save_btn.click()
+        if not resp_info.value.ok:
+            raise AssertionError(
+                f"Opening stock update rejected ({resp_info.value.status}): {resp_info.value.text()[:300]}"
+            )
 
         try:
             toast = self.page.get_by_text(re.compile(r"opening stock|updated|success", re.IGNORECASE)).first
@@ -493,7 +529,13 @@ class ProductsPage(BasePage):
 
         retrieve_confirm = modal.get_by_role("button", name="Retrieve Product")
         retrieve_confirm.wait_for(state="visible", timeout=3000)
-        retrieve_confirm.click()
+        with self.page.expect_response(
+            lambda r: r.request.method != "GET" and "/products" in urlparse(r.url).path,
+            timeout=15000,
+        ) as resp_info:
+            retrieve_confirm.click()
+        if not resp_info.value.ok:
+            return False
 
         modal.wait_for(state="hidden", timeout=5000)
         return True

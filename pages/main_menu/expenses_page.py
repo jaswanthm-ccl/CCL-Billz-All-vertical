@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-import re
-from playwright.sync_api import Page
+from typing import Callable
+from urllib.parse import parse_qs, urlparse
+
+from playwright.sync_api import Page, Response, TimeoutError as PlaywrightTimeoutError
 
 from pages.common.base_page import BasePage
 from utils.tenants import Tenant
@@ -26,10 +28,48 @@ class ExpensesPage(BasePage):
 
     def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
         super().__init__(page, tenant)
+        self.last_save_response: Response | None = None
+
+    @property
+    def _rows(self):
+        return self.page.locator("table tbody tr")
+
+    @staticmethod
+    def _is_list_response(response: Response, search: str | None = None) -> bool:
+        url = urlparse(response.url)
+        if (
+            response.request.method != "GET"
+            or response.request.resource_type not in {"fetch", "xhr"}
+            or not url.path.rstrip("/").endswith("/expenses")
+        ):
+            return False
+        return search is None or parse_qs(url.query).get("search", [""])[-1] == search
+
+    def _reload_list(self, action: Callable[[], object], search: str | None = None) -> None:
+        with self.page.expect_response(lambda r: self._is_list_response(r, search), timeout=15000):
+            action()
+        self._rows.first.wait_for(state="visible", timeout=10000)
+
+    @staticmethod
+    def _is_save_response(response: Response) -> bool:
+        path = urlparse(response.url).path.rstrip("/")
+        if response.request.method == "GET":
+            return False
+        return path.endswith("/expenses") or "/expenses/" in path + "/"
+
+    def _save(self, action: Callable[[], object]) -> bool:
+        """Run submit and wait for POST/PUT under /expenses. False if no request (validation blocked)."""
+        self.last_save_response = None
+        try:
+            with self.page.expect_response(self._is_save_response, timeout=15000) as info:
+                action()
+        except PlaywrightTimeoutError:
+            return False
+        self.last_save_response = info.value
+        return info.value.ok
 
     def navigate(self) -> None:
-        self.page.goto(self.url)
-        self.page.wait_for_load_state("networkidle")
+        self._reload_list(lambda: self.page.goto(self.url))
 
     def is_expenses_visible(self) -> bool:
         """Verify the expenses page loaded (Add Expense button present)."""
@@ -68,75 +108,60 @@ class ExpensesPage(BasePage):
         modal = self.page.get_by_role("dialog")
         modal.wait_for(state="visible", timeout=10000)
 
-        # Date (defaults to today if not provided)
         if date:
             modal.locator("input[name='date']").fill(date)
 
-        # Amount
         modal.locator("input[name='amount']").fill(amount)
 
-        # Category (react-select)
         modal.locator("input[name='expense_category_id']").locator(
             "xpath=.."
         ).locator(".react-select__input-container").click()
         self.page.get_by_role("option", name=category).click()
-        self.page.wait_for_timeout(300)
 
-        # Branch (react-select)
         modal.locator("input[name='branch_id']").locator(
             "xpath=.."
         ).locator(".react-select__input-container").click()
         self.page.get_by_role("option", name=branch).click()
-        self.page.wait_for_timeout(300)
 
-        # Payment type (react-select)
         modal.locator("input[name='payment_type']").locator(
             "xpath=.."
         ).locator(".react-select__input-container").click()
         self.page.get_by_role("option", name=payment_type).click()
-        self.page.wait_for_timeout(500)
 
-        # Bank Account (only appears when payment_type == 'Bank Account')
         if payment_type == "Bank Account" and bank_account:
-            modal.locator("input[name='bank_account_id']").locator(
+            bank_control = modal.locator("input[name='bank_account_id']").locator(
                 "xpath=.."
-            ).locator(".react-select__input-container").click()
+            ).locator(".react-select__input-container")
+            bank_control.wait_for(state="visible", timeout=5000)
+            bank_control.click()
             self.page.get_by_role("option", name=bank_account).click()
-            self.page.wait_for_timeout(300)
 
-        # Description
         if description:
             modal.locator("textarea[name='description']").fill(description)
 
-        # Submit
-        modal.get_by_role("button", name="Create").click()
-
-        # Wait for success — modal should close on success
-        try:
-            modal.wait_for(state="hidden", timeout=15000)
-        except Exception:
-            # Check if there's an error toast
+        if not self._save(modal.get_by_role("button", name="Create").click):
+            reply = self.last_save_response.text()[:300] if self.last_save_response else "no request sent"
             toast = self.page.locator(".Toastify__toast").first
-            if toast.is_visible():
-                msg = toast.text_content().strip()
-                raise AssertionError(f"Expense creation failed: {msg}")
-            raise
+            toast_msg = toast.text_content().strip() if toast.is_visible() else ""
+            raise AssertionError(f"Expense creation failed: {toast_msg or reply}")
+        modal.wait_for(state="hidden", timeout=15000)
 
     # ─── Search ────────────────────────────────────────────────────────────────
 
     def search_expense(self, query: str) -> bool:
         """Search expenses by text (searches across category, description, etc)."""
         search_box = self.page.get_by_placeholder("Search...")
-        search_box.fill(query)
-        search_box.press("Enter")
-        self.page.wait_for_load_state("networkidle", timeout=5000)
+        if search_box.input_value() != query:
+
+            def search() -> None:
+                search_box.fill(query)
+                search_box.press("Enter")
+
+            self._reload_list(search, search=query)
         try:
-            self.page.locator("table tbody tr").first.wait_for(
-                state="visible", timeout=5000
-            )
-            # Verify result doesn't say "No Data Found"
-            first_text = self.page.locator("table tbody tr").first.text_content()
-            return "No Data Found" not in first_text
+            self._rows.first.wait_for(state="visible", timeout=5000)
+            first_text = self._rows.first.text_content() or ""
+            return "No Data Found" not in first_text and "No Expenses found" not in first_text
         except Exception:
             return False
 
@@ -145,11 +170,10 @@ class ExpensesPage(BasePage):
 
         Returns dict with keys: date, category, amount, branch, paid_from, description, status.
         """
-        row = self.page.locator("table tbody tr").first
+        row = self._rows.first
         row.wait_for(state="visible", timeout=5000)
         cells = row.locator("td").all()
 
-        # Table columns: DATE, CATEGORY, AMOUNT, BRANCH, PAID FROM, DESCRIPTION, STATUS, Actions
         return {
             "date": cells[0].text_content().strip() if len(cells) > 0 else "",
             "category": cells[1].text_content().strip() if len(cells) > 1 else "",
@@ -174,51 +198,51 @@ class ExpensesPage(BasePage):
 
     def _expand_filters(self) -> None:
         """Expand the filters panel by clicking the toggle button."""
-        try:
-            toggle = self.page.locator("button.filters-toggle-btn")
-            if toggle.is_visible():
-                # Check if already expanded
-                expanded = toggle.get_attribute("aria-expanded")
-                if expanded == "false":
-                    toggle.click()
-                    self.page.wait_for_timeout(500)
-        except Exception:
-            # Fallback: try aria-label
-            try:
-                self.page.get_by_label("Expand filters").click()
-                self.page.wait_for_timeout(500)
-            except Exception:
-                pass
+        toggle = self.page.locator("button.filters-toggle-btn")
+        if toggle.count() and toggle.is_visible():
+            if toggle.get_attribute("aria-expanded") == "false":
+                toggle.click()
+                self.page.locator(".filters-section-modern").wait_for(
+                    state="visible", timeout=5000
+                )
+            return
+        expand = self.page.get_by_label("Expand filters")
+        if expand.count() and expand.is_visible():
+            expand.click()
+            self.page.locator(".filters-section-modern").wait_for(
+                state="visible", timeout=5000
+            )
 
     def filter_by_branch(self, branch_name: str) -> None:
         """Apply branch filter."""
         self._expand_filters()
-        # The branch filter react-select has a hidden input[name='branch_id']
         branch_input = self.page.locator("input[name='branch_id']").locator(
             "xpath=.."
         ).locator(".react-select__input-container")
         branch_input.click()
         self.page.get_by_role("option", name=branch_name).click()
-        self.page.wait_for_timeout(300)
-        self.page.locator(".filters-section-modern button[type='submit']").click()
-        self.page.wait_for_load_state("networkidle", timeout=5000)
+        self._reload_list(
+            lambda: self.page.locator(".filters-section-modern button[type='submit']").click()
+        )
 
     def filter_by_category(self, category_name: str) -> None:
         """Apply category filter."""
         self._expand_filters()
-        # The category filter react-select has a hidden input[name='expense_category_id']
         cat_input = self.page.locator("input[name='expense_category_id']").locator(
             "xpath=.."
         ).locator(".react-select__input-container")
         cat_input.click()
         self.page.get_by_role("option", name=category_name).click()
-        self.page.wait_for_timeout(300)
-        self.page.locator(".filters-section-modern button[type='submit']").click()
-        self.page.wait_for_load_state("networkidle", timeout=5000)
+        self._reload_list(
+            lambda: self.page.locator(".filters-section-modern button[type='submit']").click()
+        )
 
     def clear_search(self) -> None:
         """Clear the search box."""
         search_box = self.page.get_by_placeholder("Search...")
-        search_box.fill("")
-        search_box.press("Enter")
-        self.page.wait_for_load_state("networkidle", timeout=5000)
+
+        def clear() -> None:
+            search_box.fill("")
+            search_box.press("Enter")
+
+        self._reload_list(clear, search="")

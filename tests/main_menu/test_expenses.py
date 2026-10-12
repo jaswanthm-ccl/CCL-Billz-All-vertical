@@ -145,11 +145,18 @@ def test_filter_by_category(
     )
 
 
-def test_search_expense(logged_in_page):
-    """Search for an expense by description."""
+def test_search_expense(logged_in_page, module_expense_category, funded_bank_account):
+    """Search for an expense by its (unique) description."""
+    description = generate_random_name("search_expense")
     expenses_page = ExpensesPage(logged_in_page)
     expenses_page.navigate()
-
-    assert expenses_page.search_expense("Bank expense auto test"), (
-        "Expense not found by description search"
+    expenses_page.add_expense(
+        category=module_expense_category,
+        branch=funded_bank_account["branch_name"],
+        amount="10",
+        payment_type="Cash",
+        description=description,
     )
+
+    expenses_page.navigate()
+    assert expenses_page.search_expense(description), f"Expense '{description}' not found by description search"

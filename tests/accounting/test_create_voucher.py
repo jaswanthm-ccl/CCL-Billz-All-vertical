@@ -9,6 +9,8 @@ Sections:
 6. Manual Numbering defect (skipped)
 """
 import pytest
+from uuid import uuid4
+from playwright.sync_api import expect
 
 from pages.accounting.create_voucher_page import CreateVoucherPage
 
@@ -584,6 +586,24 @@ class TestMDRSettlementVoucher:
 # ══════════════════════════════════════════════════════════════════════════════
 
 
+@pytest.fixture
+def manual_payment_type(logged_in_page):
+    from pages.master_menu.voucher_types_page import VoucherTypesPage
+
+    types = VoucherTypesPage(logged_in_page)
+    types.navigate()
+    original = types.get_configuration("Payment Voucher")
+    try:
+        assert types.edit_voucher_type(
+            "Payment Voucher", {**original, "numbering_method": "Manual Entry"}
+        ), "Could not enable manual payment numbering"
+        yield
+    finally:
+        types.navigate()
+        assert types.edit_voucher_type("Payment Voucher", original), "Could not restore numbering settings"
+
+
+@pytest.mark.serial
 class TestManualNumbering:
     """Manual Voucher Numbering — known defect.
 
@@ -600,48 +620,70 @@ class TestManualNumbering:
                "Voucher Number input field. No way to enter custom number. "
                "Reported to dev team — awaiting fix."
     )
-    def test_manual_number_entry_field_exists(self, logged_in_page, voucher_funded_state):
+    def test_manual_number_entry_field_exists(self, logged_in_page, manual_payment_type):
         """Verify that switching to Manual Entry shows a Voucher Number field."""
-        from pages.master_menu.voucher_types_page import VoucherTypesPage
+        page = CreateVoucherPage(logged_in_page)
+        page.navigate()
+        page.select_voucher_type("Payment")
+        expect(self._number_field(page)).to_be_visible()
+        expect(self._number_field(page)).to_be_editable()
 
-        vt_page = VoucherTypesPage(logged_in_page)
-        vt_page.navigate()
+    @staticmethod
+    def _number_field(page):
+        return page._form().locator(
+            "input[name='voucher_number'], input[name='voucherNumber']"
+        ).first
 
-        # Read current prefix to restore later
-        original_prefix = vt_page.get_current_prefix("Payment Voucher")
-
-        # Switch to Manual Entry
-        vt_page.edit_voucher_type("Payment Voucher", "MANUAL")
-
-        try:
-            # Navigate to create payment voucher
-            page = CreateVoucherPage(logged_in_page)
-            page.navigate()
-            page.select_voucher_type("Payment")
-            page.page.wait_for_timeout(1000)
-
-            # Check if voucher number input exists
-            voucher_no = page.get_voucher_number()
-            assert voucher_no is not None, (
-                "DEFECT: Manual Entry mode does not show Voucher Number field"
-            )
-        finally:
-            # Rollback: restore original prefix
-            vt_page.navigate()
-            vt_page.edit_voucher_type("Payment Voucher", original_prefix)
+    def _prepare_manual_payment(self, browser_page, state, supplier, number):
+        page = CreateVoucherPage(browser_page)
+        page.prepare_payment(supplier, state["bank"], "1", branch=state["branch"])
+        page._set_allocation("on_account")
+        page._fill_reference_if_required("manual-number-audit")
+        expect(self._number_field(page)).to_be_editable()
+        self._number_field(page).fill(number)
+        return page
 
     @pytest.mark.skip(
         reason="DEFECT: Payment Voucher Manual Entry mode does not render "
                "Voucher Number input field. Cannot test unique numbering."
     )
-    def test_manual_number_must_be_unique(self, logged_in_page, voucher_funded_state):
+    def test_manual_number_must_be_unique(
+        self, logged_in_page, voucher_funded_state, module_supplier, manual_payment_type
+    ):
         """Duplicate manual voucher numbers should be rejected."""
-        pass
+        number = f"QA-MANUAL-{uuid4().hex[:12]}"
+        page = self._prepare_manual_payment(logged_in_page, voucher_funded_state, module_supplier, number)
+        response = page._submit_and_confirm(page.submit_button(), page._is_payment_response)
+        assert response is not None and response.ok, "First manual-number voucher was not created"
+        created = response.json()["data"]["voucher"]
+        assert created["voucher_no"] == number
+        assert page.wait_for_redirect_to_history()
+
+        page = self._prepare_manual_payment(logged_in_page, voucher_funded_state, module_supplier, number)
+        response = page._submit_and_confirm(page.submit_button(), page._is_payment_response)
+        assert response is not None, "Duplicate submission produced no validation response"
+        assert response.status in (409, 422), f"Duplicate number was not rejected: {response.text()}"
+        error = str(response.json()).lower()
+        assert any(word in error for word in ("duplicate", "already", "unique")), error
 
     @pytest.mark.skip(
         reason="DEFECT: Payment Voucher Manual Entry mode does not render "
                "Voucher Number input field. Cannot test blank rejection."
     )
-    def test_manual_number_blank_rejected(self, logged_in_page, voucher_funded_state):
+    def test_manual_number_blank_rejected(
+        self, logged_in_page, voucher_funded_state, module_supplier, manual_payment_type
+    ):
         """Blank manual voucher number should be rejected."""
-        pass
+        page = self._prepare_manual_payment(logged_in_page, voucher_funded_state, module_supplier, "")
+        field = self._number_field(page)
+        expect(field).to_have_value("")
+        if not page.is_submit_enabled():
+            expect(page.submit_button()).to_be_disabled()
+        elif not field.evaluate("element => element.checkValidity()"):
+            assert field.evaluate("element => element.validity.valueMissing"), "Unexpected field validation failure"
+        else:
+            response = page._submit_and_confirm(page.submit_button(), page._is_payment_response)
+            assert response is not None, "Blank number produced no validation response"
+            assert response.status == 422, f"Blank number was not rejected: {response.text()}"
+            error = str(response.json()).lower()
+            assert "number" in error and "required" in error, error

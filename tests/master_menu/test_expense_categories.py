@@ -53,7 +53,7 @@ def test_expense_category_crud_lifecycle(
 
 
 @pytest.mark.xfail(
-    reason="Known defect: Expense Categories has no View action"
+    reason="BUG_016: Expense Categories has no View action"
 )
 def test_expense_category_view_action(
     logged_in_page, expense_category_cleanup

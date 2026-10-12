@@ -126,7 +126,7 @@ def test_reject_duplicate_role_name(logged_in_page, role_cleanup):
             id="decimal",
             marks=pytest.mark.xfail(
                 strict=True,
-                reason="Bug #TBD: Role Sort Order accepts decimal values",
+                reason="BUG_019: Role Sort Order accepts decimal values",
             ),
         ),
         pytest.param(
@@ -134,7 +134,7 @@ def test_reject_duplicate_role_name(logged_in_page, role_cleanup):
             id="overlength",
             marks=pytest.mark.xfail(
                 strict=True,
-                reason="Bug #TBD: Role Sort Order accepts more than 6 digits",
+                reason="BUG_020: Role Sort Order accepts more than 6 digits",
             ),
         ),
     ],
@@ -156,7 +156,7 @@ def test_reject_invalid_role_sort_order(
 
 @pytest.mark.xfail(
     strict=True,
-    reason="Bug #TBD: A role assigned to an active user can be deleted",
+    reason="BUG_021: A role assigned to an active user can be deleted",
 )
 def test_role_assigned_to_user_cannot_be_deleted(
     logged_in_page,

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import re
 from decimal import Decimal
-from urllib.parse import urlparse
+from typing import Callable
+from urllib.parse import parse_qs, urlparse
 
-from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError, expect
+from playwright.sync_api import Page, Response, TimeoutError as PlaywrightTimeoutError, expect
 
 from pages.common.base_page import BasePage
 from utils.models import StockTransferResult
@@ -17,9 +18,28 @@ class StockTransfersPage(BasePage):
     def __init__(self, page: Page, tenant: Tenant | None = None) -> None:
         super().__init__(page, tenant)
 
+    @property
+    def _rows(self):
+        return self.page.locator("table tbody tr")
+
+    @staticmethod
+    def _is_list_response(response: Response, search: str | None = None) -> bool:
+        url = urlparse(response.url)
+        if (
+            response.request.method != "GET"
+            or response.request.resource_type not in {"fetch", "xhr"}
+            or not url.path.rstrip("/").endswith("/stock-transfers")
+        ):
+            return False
+        return search is None or parse_qs(url.query).get("search", [""])[-1] == search
+
+    def _reload_list(self, action: Callable[[], object], search: str | None = None) -> None:
+        with self.page.expect_response(lambda r: self._is_list_response(r, search), timeout=15000):
+            action()
+        self._rows.first.wait_for(state="visible", timeout=10000)
+
     def navigate(self) -> None:
-        self.page.goto(self.url)
-        self.page.wait_for_load_state("networkidle")
+        self._reload_list(lambda: self.page.goto(self.url))
 
     def is_stock_transfers_visible(self) -> bool:
         """Verify the stock transfers page loaded (title + add button present)."""
@@ -43,16 +63,16 @@ class StockTransfersPage(BasePage):
         )
 
     def _pick_option(self, input_name: str, text: str) -> None:
-        # The retail form silently refuses to submit when these picks run back-to-back without
-        # the short settle delays below (cause not yet identified); keep them until it is.
         self.page.locator(f"input[name='{input_name}']").locator("xpath=..").locator(
             ".react-select__control, .react-select__input-container"
         ).first.click()
-        self.page.wait_for_timeout(300)
         self.page.keyboard.type(text, delay=20)
-        self.page.wait_for_timeout(500)
-        self.page.get_by_role("option", name=text, exact=False).first.click(timeout=5000)
-        self.page.wait_for_timeout(500)
+        option = self.page.get_by_role("option", name=text, exact=False).first
+        option.wait_for(state="visible", timeout=5000)
+        option.click(timeout=5000)
+        menu = self.page.locator(".react-select__menu")
+        if menu.count():
+            menu.first.wait_for(state="hidden", timeout=5000)
 
     def add_stock_transfer(
         self,
@@ -64,7 +84,10 @@ class StockTransfersPage(BasePage):
         """products_data items: {"product", "quantity"}; for serial-tracked products give "serials": [...]
         instead of a quantity (the form sets one unit per selected serial). Raises if the API rejects it."""
         self.last_transfer_response: dict = {}
-        self.page.goto(f"{self.url}/add")
+        self.page.goto(f"{self.url}/add", wait_until="domcontentloaded")
+        self.page.get_by_role("button", name="Create transfer").wait_for(
+            state="visible", timeout=15000
+        )
 
         self._pick_option("source_branch_id", source_branch)
         self._pick_option("destination_branch_id", destination_branch)
@@ -155,20 +178,22 @@ class StockTransfersPage(BasePage):
         still filters correctly.
         """
         search_box = self.page.get_by_placeholder("Search transfer no or remarks...")
-        search_box.fill(query)
-        search_box.press("Enter")
-        self.page.wait_for_load_state("networkidle", timeout=5000)
+        if search_box.input_value() != query:
+
+            def search() -> None:
+                search_box.fill(query)
+                search_box.press("Enter")
+
+            self._reload_list(search, search=query)
         try:
-            self.page.locator("table tbody tr").first.wait_for(
-                state="visible", timeout=5000
-            )
+            self._rows.first.wait_for(state="visible", timeout=5000)
             return True
         except Exception:
             return False
 
     def get_first_transfer_no(self) -> str:
         """Read the transfer number from the first row in the table."""
-        row = self.page.locator("table tbody tr").first
+        row = self._rows.first
         row.wait_for(state="visible", timeout=5000)
         # Transfer no is the first column (index 0)
         return row.locator("td").nth(0).text_content().strip()
@@ -180,20 +205,19 @@ class StockTransfersPage(BasePage):
         if not self.search_stock_transfer(transfer_no):
             return False
         # Transfer number IS visible in the row, so we can match precisely
-        row = self.page.locator("table tbody tr").filter(has_text=transfer_no).first
+        row = self._rows.filter(has_text=transfer_no).first
         try:
             row.wait_for(state="visible", timeout=5000)
         except Exception:
             # Fallback to first row if exact match fails
-            row = self.page.locator("table tbody tr").first
+            row = self._rows.first
 
         row.get_by_title("view").first.click()
-        self.page.wait_for_load_state("networkidle")
 
         # Verify detail page loaded — should show "Transfer details"
         try:
             self.page.get_by_text("Transfer details").first.wait_for(
-                state="visible", timeout=5000
+                state="visible", timeout=10000
             )
             return True
         except Exception:
@@ -247,61 +271,60 @@ class StockTransfersPage(BasePage):
 
     # ─── Filters ───────────────────────────────────────────────────────────────
 
+    def _filter_control(self, input_name: str):
+        return self.page.locator(f"input[name='{input_name}']").locator("xpath=..").locator(
+            ".react-select__control"
+        ).first
+
     def expand_filters(self) -> None:
         """Expand the filters panel if collapsed."""
-        try:
-            toggle_btn = self.page.get_by_role(
-                "button", name=re.compile(r"filter", re.IGNORECASE)
-            )
-            if toggle_btn.is_visible():
-                toggle_btn.click()
-                self.page.wait_for_timeout(500)
-        except Exception:
-            pass
+        filter_btn = self.page.get_by_role("button", name="Filter", exact=True)
+        if filter_btn.count() and filter_btn.first.is_visible():
+            return
+        toggle = self.page.locator("button.filters-toggle-btn")
+        if toggle.count() and toggle.is_visible() and toggle.get_attribute("aria-expanded") == "false":
+            toggle.click()
+        else:
+            expand = self.page.get_by_label("Expand filters")
+            if expand.count():
+                expand.click()
+        filter_btn.first.wait_for(state="visible", timeout=10000)
 
     def filter_by_source_branch(self, branch_name: str) -> None:
         """Apply source branch filter."""
         self.expand_filters()
-        container = self.page.locator("input[name='source_branch_id']").locator(
-            "xpath=.."
-        ).locator(".react-select__input-container")
-        container.click()
-        self.page.wait_for_timeout(200)
+        self._filter_control("source_branch_id").click()
         self.page.keyboard.type(branch_name, delay=20)
-        self.page.wait_for_timeout(300)
-        self.page.get_by_role("option", name=branch_name, exact=False).first.click()
-        self.page.get_by_role("button", name="Filter", exact=True).click()
-        self.page.wait_for_load_state("networkidle", timeout=5000)
+        option = self.page.get_by_role("option", name=branch_name, exact=False).first
+        option.wait_for(state="visible", timeout=5000)
+        option.click()
+        self._reload_list(
+            lambda: self.page.get_by_role("button", name="Filter", exact=True).click()
+        )
 
     def filter_by_destination_branch(self, branch_name: str) -> None:
         """Apply destination branch filter."""
         self.expand_filters()
-        container = self.page.locator("input[name='destination_branch_id']").locator(
-            "xpath=.."
-        ).locator(".react-select__input-container")
-        container.click()
-        self.page.wait_for_timeout(200)
+        self._filter_control("destination_branch_id").click()
         self.page.keyboard.type(branch_name, delay=20)
-        self.page.wait_for_timeout(300)
-        self.page.get_by_role("option", name=branch_name, exact=False).first.click()
-        self.page.get_by_role("button", name="Filter", exact=True).click()
-        self.page.wait_for_load_state("networkidle", timeout=5000)
+        option = self.page.get_by_role("option", name=branch_name, exact=False).first
+        option.wait_for(state="visible", timeout=5000)
+        option.click()
+        self._reload_list(
+            lambda: self.page.get_by_role("button", name="Filter", exact=True).click()
+        )
 
     def clear_filters(self) -> None:
         """Click clear filters to reset."""
         self.expand_filters()
-        try:
-            self.page.get_by_text("Clear filters").click()
-            self.page.wait_for_load_state("networkidle", timeout=5000)
-        except Exception:
-            pass
+        clear = self.page.get_by_text("Clear filters")
+        if clear.count() and clear.first.is_visible():
+            self._reload_list(lambda: clear.first.click())
 
     def is_transfer_in_table(self, text: str) -> bool:
         """Check if a row containing text is visible in the table."""
         try:
-            self.page.locator("table tbody tr").filter(
-                has_text=text
-            ).first.wait_for(state="visible", timeout=5000)
+            self._rows.filter(has_text=text).first.wait_for(state="visible", timeout=5000)
             return True
         except Exception:
             return False
@@ -320,41 +343,30 @@ class StockTransfersPage(BasePage):
 
     def attempt_transfer_same_branch(self, branch_name: str, product_name: str) -> bool:
         """Try to create a transfer with same source and destination — should fail validation."""
-        self.page.goto(f"{self.url}/add")
-        self.page.wait_for_load_state("networkidle")
+        self.page.goto(f"{self.url}/add", wait_until="domcontentloaded")
+        self.page.get_by_role("button", name="Create transfer").wait_for(
+            state="visible", timeout=15000
+        )
 
-        # Select Source Branch
-        self.page.locator("input[name='source_branch_id']").locator(
-            "xpath=.."
-        ).locator(".react-select__input-container").click()
-        self.page.get_by_role("option", name=branch_name).click()
-        self.page.wait_for_timeout(500)
+        self._pick_option("source_branch_id", branch_name)
 
         # Try to select same branch as destination — it should be filtered out
         self.page.locator("input[name='destination_branch_id']").locator(
             "xpath=.."
         ).locator(".react-select__input-container").click()
 
-        # Check if the same branch is NOT in the options (filtered out)
         try:
             option = self.page.get_by_role("option", name=branch_name)
+            option.first.wait_for(state="visible", timeout=2000)
             if option.count() == 0:
                 return True  # Correctly filtered out
-            # If it is there, try selecting and submitting
-            option.click()
+            option.first.click()
         except Exception:
             return True  # Not available = validation working
 
-        # Select product and try to submit
-        self.page.locator("input[name='items.0.product_selector']").locator(
-            "xpath=.."
-        ).locator(".react-select__input-container").click()
-        self.page.get_by_role("option", name=product_name).click()
-        self.page.wait_for_timeout(500)
-
+        self._pick_option("items.0.product_selector", product_name)
         self.page.get_by_role("button", name="Create transfer").click()
 
-        # Check for validation error
         try:
             self.page.get_by_text(
                 re.compile(r"source.*destination.*different|same.*branch", re.IGNORECASE)
@@ -367,44 +379,25 @@ class StockTransfersPage(BasePage):
         self, source_branch: str, destination_branch: str, product_name: str, quantity: int
     ) -> bool:
         """Try to create transfer with quantity > available stock — should fail validation."""
-        self.page.goto(f"{self.url}/add")
-        self.page.wait_for_load_state("networkidle")
+        self.page.goto(f"{self.url}/add", wait_until="domcontentloaded")
+        self.page.get_by_role("button", name="Create transfer").wait_for(
+            state="visible", timeout=15000
+        )
 
-        # Select Source Branch
-        self.page.locator("input[name='source_branch_id']").locator(
-            "xpath=.."
-        ).locator(".react-select__input-container").click()
-        self.page.get_by_role("option", name=source_branch).click()
-        self.page.wait_for_timeout(500)
+        self._pick_option("source_branch_id", source_branch)
+        self._pick_option("destination_branch_id", destination_branch)
+        self._pick_option("items.0.product_selector", product_name)
 
-        # Select Destination Branch
-        self.page.locator("input[name='destination_branch_id']").locator(
-            "xpath=.."
-        ).locator(".react-select__input-container").click()
-        self.page.get_by_role("option", name=destination_branch).click()
-        self.page.wait_for_timeout(500)
-
-        # Select product
-        self.page.locator("input[name='items.0.product_selector']").locator(
-            "xpath=.."
-        ).locator(".react-select__input-container").click()
-        self.page.get_by_role("option", name=product_name).click()
-        self.page.wait_for_timeout(500)
-
-        # Fill excessive quantity
         qty_input = self.page.locator("input[name='items.0.quantity']")
         qty_input.click()
         qty_input.fill(str(quantity))
 
-        # Submit
         self.page.get_by_role("button", name="Create transfer").click()
 
-        # Check for validation error about exceeding stock
         try:
             self.page.get_by_text(
                 re.compile(r"exceeds.*available|quantity.*stock", re.IGNORECASE)
             ).wait_for(state="visible", timeout=5000)
             return True
         except Exception:
-            # Check if form didn't navigate away (stayed on form = error)
             return "/add" in self.page.url

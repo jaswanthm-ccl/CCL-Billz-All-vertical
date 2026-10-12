@@ -78,14 +78,14 @@ def test_sac_hsn_required_code(logged_in_page):
             "alphabetic",
             id="alphabetic",
             marks=pytest.mark.xfail(
-                reason="Known bug: Alphabetic HSN/SAC codes are accepted"
+                reason="BUG_022: Alphabetic HSN/SAC codes are accepted"
             ),
         ),
         pytest.param(
             "too-short",
             id="too-short",
             marks=pytest.mark.xfail(
-                reason="Known bug: Short HSN/SAC codes are accepted"
+                reason="BUG_023: Short HSN/SAC codes are accepted"
             ),
         ),
         pytest.param("too-long", id="too-long"),

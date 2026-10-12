@@ -121,7 +121,7 @@ def test_reject_duplicate_rack_in_branch(
 
 @pytest.mark.xfail(
     reason=(
-        "System currently allows deleting a branch that contains an active "
+        "BUG_017: System currently allows deleting a branch that contains an active "
         "rack (missing restriction/bug)"
     )
 )

@@ -59,7 +59,7 @@ def test_reject_overlength_attribute_name(attributes_page):
 
 @pytest.mark.xfail(
     reason=(
-        "App bug: ProductUnitAttributeList.tsx shows the Actions column only when the user LACKS "
+        "BUG_001: ProductUnitAttributeList.tsx shows the Actions column only when the user LACKS "
         "view/update/delete permissions (inverted canAccess check), so admins can't view, edit or delete"
     )
 )

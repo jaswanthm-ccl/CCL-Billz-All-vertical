@@ -62,7 +62,7 @@ def test_reject_duplicate_product_attribute_name(logged_in_page, product_attr_cl
         "Expected HTTP failure (400/409/422) or UI validation feedback for duplicate attribute name"
     )
 @pytest.mark.xfail(
-    reason="Known UI gap: Product Attribute rows currently have no view, edit, or delete action buttons"
+    reason="BUG_001: Product Attribute rows currently have no view, edit, or delete action buttons"
 )
 def test_product_attribute_row_actions_are_available(
     logged_in_page, product_attr_cleanup

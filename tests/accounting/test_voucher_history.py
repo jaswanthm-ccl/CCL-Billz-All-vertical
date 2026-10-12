@@ -1,4 +1,6 @@
 import pytest
+import time
+from pages.accounting.create_voucher_page import CreateVoucherPage
 from pages.accounting.voucher_history_page import VoucherHistoryPage
 
 
@@ -14,22 +16,36 @@ def test_voucher_history_page_loads(logged_in_page):
     assert page.is_page_visible(), "Voucher history page did not load"
 
 
-def test_voucher_history_has_data(logged_in_page, funded_bank_account):
-    """Verify vouchers exist (auto-generated from funded_bank_account sales).
+@pytest.fixture
+def history_voucher(logged_in_page, voucher_funded_state):
+    marker = f"voucher history audit {time.time_ns()}"
+    creator = CreateVoucherPage(logged_in_page)
+    creator.navigate_contra()
+    creator.create_contra_custom(
+        voucher_funded_state["bank"], "Cash Ledger", "1", marker,
+        branch=voucher_funded_state["branch"],
+    )
+    response = creator.last_voucher_response
+    assert response is not None and response.ok, "History test voucher was not created"
+    voucher_no = (response.json().get("data", {}).get("voucher") or {}).get("voucher_no")
+    assert voucher_no, "Creation response did not contain a voucher number"
+    assert creator.wait_for_redirect_to_history()
+    return {"voucher_no": str(voucher_no), "marker": marker}
 
-    The funded_bank_account fixture creates Sales which generate system
-    vouchers visible in the history.
-    """
+
+def test_voucher_history_has_data(logged_in_page, history_voucher):
+    """The exact newly created voucher must appear in history and its detail."""
     page = VoucherHistoryPage(logged_in_page)
     page.navigate()
 
     # Include system vouchers to see sale-generated entries
     page.toggle_include_system_vouchers(True)
 
-    row_count = page.get_row_count()
-    assert row_count > 0, (
-        "No vouchers found — expected at least one from funded_bank_account sales"
-    )
+    voucher_no = history_voucher["voucher_no"]
+    assert page.search_voucher(voucher_no), f"New voucher {voucher_no} missing from history"
+    assert page.get_first_row_data()["voucher_no"] == voucher_no
+    detail = page.inspect_voucher_by_number(voucher_no)
+    assert history_voucher["marker"] in detail["content"], "Unrelated voucher detail opened"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
