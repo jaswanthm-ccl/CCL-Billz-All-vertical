@@ -1,0 +1,103 @@
+name: Galaxy manual tests
+
+run-name: Galaxy ${{ inputs.suite }} — ${{ inputs.application_build }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: Test suite
+        type: choice
+        options:
+          - dashboard-check
+          - full-regression
+        default: dashboard-check
+      application_build:
+        description: Deployed application build or release being tested
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: galaxy-development-tests
+  cancel-in-progress: false
+
+jobs:
+  galaxy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      GALAXY_BASE_URL: ${{ vars.GALAXY_BASE_URL }}
+      GALAXY_USER_EMAIL: ${{ secrets.GALAXY_USER_EMAIL }}
+      GALAXY_USER_PASSWORD: ${{ secrets.GALAXY_USER_PASSWORD }}
+      TEST_ENV: dev
+      ALLOW_MUTATING_TESTS: '1'
+      SELECTED_SUITE: ${{ inputs.suite }}
+      APPLICATION_BUILD: ${{ inputs.application_build }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Locate framework
+        shell: bash
+        run: |
+          if [ -f playwright-python-tests/requirements.txt ]; then
+            echo 'TEST_ROOT=playwright-python-tests' >> "$GITHUB_ENV"
+          elif [ -f requirements.txt ] && [ -f conftest.py ]; then
+            echo 'TEST_ROOT=.' >> "$GITHUB_ENV"
+          else
+            echo 'Cannot locate the Playwright Python framework.'
+            exit 1
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Validate configuration
+        working-directory: ${{ env.TEST_ROOT }}
+        run: |
+          python - <<'PY'
+          import os
+          from urllib.parse import urlparse
+          required = ('GALAXY_BASE_URL', 'GALAXY_USER_EMAIL', 'GALAXY_USER_PASSWORD')
+          missing = [key for key in required if not os.getenv(key)]
+          if missing:
+              raise SystemExit('Missing GitHub configuration: ' + ', '.join(missing))
+          expected = 'auto-mobile.devccl-billzweb.crystalbillz.com'
+          url = urlparse(os.environ['GALAXY_BASE_URL'])
+          if url.scheme != 'https' or url.hostname != expected or url.username or url.password:
+              raise SystemExit('V1 only supports the existing Galaxy development HTTPS host.')
+          if os.path.exists('.env'):
+              raise SystemExit('Remove the committed .env file; it overrides CI environment variables.')
+          PY
+
+      - name: Install test dependencies
+        working-directory: ${{ env.TEST_ROOT }}
+        run: |
+          python -m pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Run Galaxy tests
+        working-directory: ${{ env.TEST_ROOT }}
+        shell: bash
+        run: |
+          mkdir -p reports
+          printf 'Application build: %s\nAutomation commit: %s\nSuite: %s\n' "$APPLICATION_BUILD" "$GITHUB_SHA" "$SELECTED_SUITE" > reports/run-context.txt
+          if [ "$SELECTED_SUITE" = dashboard-check ]; then
+            python -m pytest tests/Verticals/Galaxy/test_dashboard.py --tenant galaxy --browser chromium -o 'addopts=-v -rfEX' --junit-xml=reports/galaxy_dashboard.xml --html=reports/galaxy_dashboard.html --self-contained-html
+          else
+            python run_tests.py --tenant galaxy --workers 1 -- --browser chromium
+          fi
+
+      - name: Save reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: galaxy-results-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.TEST_ROOT }}/reports/
+            ${{ env.TEST_ROOT }}/test-results/
+          if-no-files-found: warn
+          retention-days: 14
